@@ -1,0 +1,115 @@
+# frozen_string_literal: true
+
+require "json"
+
+settings_path = File.join(__dir__, "kali-vm.json")
+abort "Missing #{settings_path}" unless File.file?(settings_path)
+
+settings = JSON.parse(File.read(settings_path))
+box = settings.fetch("box")
+
+def integer_setting(settings, key, minimum, maximum)
+  value = Integer(settings.fetch(key))
+  unless value.between?(minimum, maximum)
+    abort "#{key} must be between #{minimum} and #{maximum}"
+  end
+  value
+rescue ArgumentError, TypeError
+  abort "#{key} must be an integer"
+end
+
+vm_name = settings.fetch("vmName").to_s.strip
+hostname = settings.fetch("hostname").to_s.strip
+abort "vmName cannot be empty" if vm_name.empty?
+abort "hostname must be a valid Linux hostname" unless hostname.match?(/\A[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\z/)
+
+memory_mb = integer_setting(settings, "memoryMB", 2048, 65_536)
+cpus = integer_setting(settings, "cpus", 1, 64)
+box_name = box.fetch("name").to_s.strip
+box_version = box.fetch("version", "").to_s.strip
+direct_url = box.fetch("directUrl", "").to_s.strip
+direct_sha256 = box.fetch("directSha256", "").to_s.strip
+abort "box.name cannot be empty" if box_name.empty?
+
+if !direct_url.empty? && !direct_sha256.match?(/\A[0-9a-fA-F]{64}\z/)
+  abort "box.directSha256 must be a 64-character SHA-256 when directUrl is set"
+end
+if !direct_url.empty? && !box_name.match?(/\A[a-zA-Z0-9][a-zA-Z0-9._-]{0,39}\z/)
+  abort "when directUrl is set, box.name must be a 1-40 character label using letters, numbers, dot, underscore, or hyphen"
+end
+effective_box_name = direct_url.empty? ? box_name : "#{box_name}-sha256-#{direct_sha256.downcase}"
+
+Vagrant.require_version ">= 2.4.9"
+
+Vagrant.configure("2") do |config|
+  # This is Kali's official Vagrant box. The exact version makes rebuilds
+  # deterministic; normal starts work offline after Vagrant caches the box.
+  config.vm.box = effective_box_name
+  config.vm.box_architecture = "amd64"
+  config.vm.box_version = box_version unless box_version.empty? || !direct_url.empty?
+  config.vm.box_check_update = false
+
+  # A verified direct .box URL and a new unique box name can replace the
+  # catalog without changing the rest of the program. The checksum is appended
+  # to the cache name, so changing the expected bytes cannot reuse an old box.
+  unless direct_url.empty?
+    config.vm.box_url = direct_url
+    config.vm.box_download_checksum_type = "sha256"
+    config.vm.box_download_checksum = direct_sha256
+  end
+
+  config.vm.hostname = hostname
+  config.vm.boot_timeout = 600
+  config.vm.graceful_halt_timeout = 120
+
+  # Terminal-only by default: do not expose this security-testing VM to the
+  # LAN and do not share the Windows project folder into the guest.
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  # Bind SSH only to Windows localhost. Start at 2223 because another VM on
+  # this host already owns 2222; auto-correction safely handles other clashes.
+  config.vm.usable_port_range = 2200..2299
+  config.vm.network "forwarded_port",
+    guest: 22,
+    host: 2223,
+    host_ip: "127.0.0.1",
+    protocol: "tcp",
+    id: "ssh",
+    auto_correct: true
+
+  # Dedicated lab path for an explicitly authorized target VM. Keep adapter 1
+  # as NAT for updates; attach the Windows VM to the same host-only network and
+  # give it an unused 192.168.56.0/24 address such as 192.168.56.20.
+  config.vm.network "private_network",
+    ip: "192.168.56.10",
+    adapter: 2,
+    name: "VirtualBox Host-Only Ethernet Adapter"
+
+  # Replace the public box bootstrap key with a per-VM key and never fall
+  # through to keys from the Windows ssh-agent.
+  config.ssh.insert_key = true
+  config.ssh.keys_only = true
+  config.ssh.forward_x11 = false
+  config.ssh.keep_alive = true
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = vm_name
+    vb.gui = false
+    vb.memory = memory_mb
+    vb.cpus = cpus
+    vb.check_guest_additions = false
+
+    # Disable host-integration channels that a terminal-only guest does not
+    # need. NAT networking and SSH remain enabled.
+    vb.customize ["modifyvm", :id, "--clipboard-mode", "disabled"]
+    vb.customize ["modifyvm", :id, "--clipboard-file-transfers", "disabled"]
+    vb.customize ["modifyvm", :id, "--drag-and-drop", "disabled"]
+    vb.customize ["modifyvm", :id, "--audio-enabled", "off"]
+    vb.customize ["modifyvm", :id, "--vrde", "off"]
+  end
+
+  config.vm.provision "shell",
+    path: File.join("scripts", "provision.sh"),
+    privileged: true,
+    name: "Harden local SSH access"
+end

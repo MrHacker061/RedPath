@@ -1,0 +1,13 @@
+{
+  "vmName": "Headless-Kali-Terminal",
+  "hostname": "kali-headless",
+  "memoryMB": 4096,
+  "cpus": 4,
+  "box": {
+    "name": "kalilinux/rolling",
+    "version": "2026.2.0",
+    "recordedCatalogSha256": "503366b477184fcfcbb3888f7e887d267d3b588dd697053ba99a3e9527370626",
+    "directUrl": "",
+    "directSha256": ""
+  }
+}
