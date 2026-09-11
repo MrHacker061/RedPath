@@ -8,7 +8,7 @@ from sqlalchemy import text
 from redpath import __version__
 from redpath.config import Settings, get_settings
 from redpath.contracts import ComponentHealth, HealthResponse
-from redpath.database import Base, create_database
+from redpath.database import Base, create_database, migrate_database
 from redpath.nmap_parser import parse_nmap_xml_bytes
 from redpath.session_api import router as session_router
 import redpath.models  # noqa: F401
@@ -22,6 +22,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         Base.metadata.create_all(engine)
+        migrate_database(engine)
         yield
         engine.dispose()
 

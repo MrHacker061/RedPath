@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from redpath.config import Settings
@@ -19,3 +19,15 @@ def create_database(settings: Settings):
         cursor.close()
 
     return engine, sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def migrate_database(engine) -> None:
+    """Apply small, forward-only SQLite compatibility migrations."""
+    inspector = inspect(engine)
+    if "findings" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("findings")}
+    if "evidence_ref" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE findings ADD COLUMN evidence_ref VARCHAR(160) NOT NULL DEFAULT ''"))
+            connection.execute(text("UPDATE findings SET evidence_ref = scan_import_id WHERE evidence_ref = ''"))
