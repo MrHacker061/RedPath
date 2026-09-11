@@ -25,8 +25,20 @@ export class RedPathApi {
     return this.request("/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(session) });
   }
 
+  async addLessonSource(sessionId, lesson) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/lesson-source`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(lesson) });
+  }
+
+  async addTarget(sessionId, target) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/target`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(target) });
+  }
+
   async importScan(sessionId, scan) {
     return this.request(`/sessions/${encodeURIComponent(sessionId)}/scan-import`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(scan) });
+  }
+
+  async getExplanation(sessionId) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/explanation`);
   }
 
   async request(path, options = {}) {

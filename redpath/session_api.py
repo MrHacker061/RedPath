@@ -26,6 +26,8 @@ from redpath.contracts import (
     SessionSummary,
 )
 from redpath.models import AuditEvent, AuthorizedTarget, Finding, LabSession, LessonSource, ScanImport
+from redpath_ai import LearningResponse, explain_findings
+from redpath_ai.schemas import EvidenceState as AIEvidenceState, Finding as AIFinding
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 Parser = Callable[[str, str, str, str], list[dict[str, Any]]]
@@ -202,3 +204,19 @@ def import_scan(session_id: str, payload: ScanImportRequest, request: Request, d
     audit(db, item.id, "scan_import.created", scan_import_id=imported.id, finding_count=len(normalized), content_hash=digest)
     db.commit()
     return ScanImportResponse(scan_import=ScanImportContract(id=imported.id, source_type=imported.source_type, content_hash=imported.content_hash, created_at=imported.created_at), findings=normalized)
+
+
+@router.get("/{session_id}/explanation", response_model=LearningResponse)
+def explain_session_findings(session_id: str, db: Session = Depends(get_db)) -> LearningResponse:
+    item = active_session(db, session_id)
+    stored = db.scalars(select(Finding).where(Finding.session_id == item.id).order_by(Finding.created_at, Finding.id)).all()
+    findings = [AIFinding(
+        id=value.id, session_id=value.session_id, target_id=value.target_id,
+        state=AIEvidenceState(value.state), category=value.category, protocol=value.protocol,
+        port=value.port, service_hint=value.service_hint,
+        evidence_source=value.scan_import_id,
+    ) for value in stored]
+    response = explain_findings(findings)
+    audit(db, item.id, "learning.explanation.generated", finding_count=len(findings), source_ids=sorted({source for explanation in response.explanations for source in explanation.source_ids}))
+    db.commit()
+    return response

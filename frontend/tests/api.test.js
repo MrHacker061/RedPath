@@ -81,12 +81,14 @@ test("powered-off and not-created Kali states are safe on-demand states", () => 
 });
 
 test("session creation keeps lesson and target separate", async () => {
-  let request;
-  const api = new RedPathApi({ fetchImpl: async (url, options) => { request = { url, body: JSON.parse(options.body) }; return jsonResponse({ id: "session-1" }); } });
-  await api.createSession({ lesson_url: "https://example.test/lesson", target: "192.168.56.20" });
-  assert.equal(request.url, "/api/v1/sessions");
-  assert.equal(request.body.lesson_url, "https://example.test/lesson");
-  assert.equal(request.body.target, "192.168.56.20");
+  const requests = [];
+  const api = new RedPathApi({ fetchImpl: async (url, options) => { requests.push({ url, body: JSON.parse(options.body) }); return jsonResponse({ id: "session-1" }); } });
+  await api.createSession({ authorization_confirmed: true, expires_at: "2030-01-01T00:00:00Z" });
+  await api.addLessonSource("session-1", { url: "https://example.test/lesson" });
+  await api.addTarget("session-1", { address: "192.168.56.20", authorization_source: "user_confirmation", expires_at: "2030-01-01T00:00:00Z" });
+  assert.deepEqual(requests.map(({ url }) => url), ["/api/v1/sessions", "/api/v1/sessions/session-1/lesson-source", "/api/v1/sessions/session-1/target"]);
+  assert.equal(requests[1].body.url, "https://example.test/lesson");
+  assert.equal(requests[2].body.address, "192.168.56.20");
 });
 
 test("scan import encodes session identifier", async () => {
@@ -94,6 +96,14 @@ test("scan import encodes session identifier", async () => {
   const api = new RedPathApi({ fetchImpl: async (value) => { url = value; return jsonResponse({ findings: [] }); } });
   await api.importScan("session /1", { filename: "scan.xml", xml_text: "<nmaprun/>" });
   assert.equal(url, "/api/v1/sessions/session%20%2F1/scan-import");
+});
+
+test("explanation request remains scoped to the session", async () => {
+  let url;
+  const api = new RedPathApi({ fetchImpl: async (value) => { url = value; return jsonResponse({ explanations: [], notes: [], missing_evidence: [], execution_authorized: false }); } });
+  const response = await api.getExplanation("session /1");
+  assert.equal(url, "/api/v1/sessions/session%20%2F1/explanation");
+  assert.equal(response.execution_authorized, false);
 });
 
 test("finding normalization keeps bounded evidence fields", () => {

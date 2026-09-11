@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -84,12 +85,31 @@ def test_expired_and_invalid_session_inputs_are_rejected(client):
     assert client.post(f"/api/v1/sessions/{session['id']}/target", json={"address": "192.168.1.2", "authorization_source": "lab", "expires_at": future(3)}).status_code == 422
 
 
-def test_scan_import_requires_parser_and_active_target(client):
+def test_scan_import_requires_parser_and_active_target(client, app):
     session = create_session(client)
     payload = {"filename": "scan.xml", "xml_text": "<nmaprun/>"}
     assert client.post(f"/api/v1/sessions/{session['id']}/scan-import", json=payload).status_code == 409
     assert add_target(client, session["id"]).status_code == 201
+    app.state.nmap_parser = None
     assert client.post(f"/api/v1/sessions/{session['id']}/scan-import", json=payload).status_code == 503
+
+
+def test_real_parser_completes_evidence_only_flow(client):
+    session = create_session(client)
+    client.post(f"/api/v1/sessions/{session['id']}/lesson-source", json={"url": "https://tryhackme.com/room/example"})
+    target = add_target(client, session["id"]).json()
+    xml = (Path(__file__).parent / "fixtures" / "nmap_sample.xml").read_text(encoding="utf-8")
+    response = client.post(f"/api/v1/sessions/{session['id']}/scan-import", json={"filename": "owned-lab.xml", "xml_text": xml})
+    assert response.status_code == 201, response.text
+    finding = response.json()["findings"][0]
+    assert finding["session_id"] == session["id"]
+    assert finding["target_id"] == target["id"]
+    assert finding["state"] == "observed"
+    assert finding["evidence_source"] == response.json()["scan_import"]["id"]
+    explanation = client.get(f"/api/v1/sessions/{session['id']}/explanation")
+    assert explanation.status_code == 200
+    assert explanation.json()["execution_authorized"] is False
+    assert explanation.json()["explanations"][0]["finding_id"] == finding["id"]
 
 
 def test_scan_import_uses_bounded_parser_contract_and_persists_findings(client, app):

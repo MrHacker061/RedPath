@@ -9,6 +9,7 @@ from redpath import __version__
 from redpath.config import Settings, get_settings
 from redpath.contracts import ComponentHealth, HealthResponse
 from redpath.database import Base, create_database
+from redpath.nmap_parser import parse_nmap_xml_bytes
 from redpath.session_api import router as session_router
 import redpath.models  # noqa: F401
 
@@ -28,7 +29,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = config
     app.state.engine = engine
     app.state.session_factory = session_factory
-    app.state.nmap_parser = None
+    def parse_import(xml_text: str, session_id: str, target_id: str, scan_import_id: str):
+        result = parse_nmap_xml_bytes(
+            xml_text.encode("utf-8"), scan_id=scan_import_id,
+            session_id=session_id, target_id=target_id,
+            max_bytes=1_000_000,
+        )
+        return [finding.model_copy(update={"evidence_source": scan_import_id}) for finding in result.findings]
+
+    app.state.nmap_parser = parse_import
     app.include_router(session_router)
 
     @app.get("/api/v1/health", response_model=HealthResponse)

@@ -9,6 +9,8 @@ const scanForm = document.querySelector("#scan-form");
 const scanFile = document.querySelector("#scan-file");
 const evidenceMessage = document.querySelector("#evidence-message");
 const findingsBody = document.querySelector("#findings-body");
+const reportMessage = document.querySelector("#report-message");
+const explanations = document.querySelector("#explanations");
 let activeSessionId = null;
 
 function setLoading(isLoading) {
@@ -66,10 +68,10 @@ sessionForm.addEventListener("submit", async (event) => {
   submit.disabled = true;
   sessionMessage.textContent = "Creating the authorized session…";
   try {
-    const session = await api.createSession({
-      lesson_url: data.get("lesson_url"), target: data.get("target"), objective: data.get("objective"),
-      expires_in_minutes: Number(data.get("expires_in_minutes")), authorization_confirmed: data.get("authorization_confirmed") === "on",
-    });
+    const expiresAt = new Date(Date.now() + Number(data.get("expires_in_minutes")) * 60_000).toISOString();
+    const session = await api.createSession({ authorization_confirmed: data.get("authorization_confirmed") === "on", expires_at: expiresAt });
+    await api.addLessonSource(session.id, { url: data.get("lesson_url"), title: data.get("objective") });
+    await api.addTarget(session.id, { address: data.get("target"), authorization_source: "user_confirmation", expires_at: expiresAt });
     activeSessionId = session.id;
     scanFile.disabled = false;
     scanForm.querySelector("button[type=submit]").disabled = false;
@@ -104,6 +106,22 @@ scanForm.addEventListener("submit", async (event) => {
       findingsBody.append(row);
     }
     evidenceMessage.textContent = `${findings.length} observed finding${findings.length === 1 ? "" : "s"} imported.`;
+    const learning = await api.getExplanation(activeSessionId);
+    explanations.replaceChildren();
+    for (const explanation of learning.explanations || []) {
+      const article = document.createElement("article");
+      const heading = document.createElement("h3");
+      heading.textContent = explanation.summary;
+      const meaning = document.createElement("p");
+      meaning.textContent = explanation.what_it_means;
+      const limit = document.createElement("p");
+      limit.textContent = explanation.what_it_does_not_prove;
+      article.append(heading, meaning, limit);
+      explanations.append(article);
+    }
+    reportMessage.textContent = learning.explanations?.length
+      ? "These explanations describe evidence only. They do not authorize execution."
+      : (learning.missing_evidence?.[0] || "No explanation was available.");
   } catch (error) { evidenceMessage.textContent = error.message; }
   finally { submit.disabled = false; }
 });
