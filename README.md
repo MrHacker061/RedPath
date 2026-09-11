@@ -33,6 +33,10 @@ Copy `.env.example` to `.env` for local overrides. The `.env` file is ignored.
 The supported launcher rejects any non-loopback `REDPATH_HOST`. AI proposals are
 untrusted wire data and must pass `validate_untrusted_proposal`, policy review,
 and exact user approval before any later execution component may use them.
+Approval creation must store `action_protected_hash(validated_proposal)`. The
+executor must call `revalidate_approval_before_execution` immediately before
+running an action so changes to its name or arguments fail closed. The database
+also binds each action to the exact approval, proposal, and session tuple.
 
 The files in `docs`, `scanner`, `tests`, and `vm`, along with this README,
 `.gitignore`, and `.gitattributes`, belong in GitHub. Do not add `.local`,

@@ -6,12 +6,16 @@ from pydantic import ValidationError
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 
-from redpath.action_registry import validate_untrusted_proposal
+from redpath.action_registry import (
+    action_protected_hash,
+    revalidate_approval_before_execution,
+    validate_untrusted_proposal,
+)
 from redpath.app import create_app
 from redpath.config import Settings
 from redpath.contracts import AIProposal, NormalizedFinding
 from redpath.database import Base
-from redpath.models import Approval, AuthorizedTarget, Finding, LabSession, Proposal, ScanImport
+from redpath.models import Action, Approval, AuthorizedTarget, Finding, LabSession, Proposal, ScanImport
 
 
 @pytest.fixture
@@ -80,6 +84,23 @@ def test_registry_validates_untrusted_action_values_and_backend_references():
     with pytest.raises(ValidationError):
         validate_untrusted_proposal(extra, authorized_target_id="target-3", available_finding_ids={"finding-12"})
 
+    approved_hash = action_protected_hash(validated)
+    revalidate_approval_before_execution(
+        validated, approved_protected_hash=approved_hash
+    )
+    changed = validated.model_copy(
+        update={"arguments": {"target_id": "target-3", "port": 443}}
+    )
+    with pytest.raises(ValueError, match="exact approved name and arguments"):
+        revalidate_approval_before_execution(
+            changed, approved_protected_hash=approved_hash
+        )
+    changed_name = validated.model_copy(update={"action_name": "check_tcp_connection"})
+    with pytest.raises(ValueError, match="exact approved name and arguments"):
+        revalidate_approval_before_execution(
+            changed_name, approved_protected_hash=approved_hash
+        )
+
 
 def test_sqlite_foreign_keys_reject_missing_and_cross_session_references(app):
     Base.metadata.create_all(app.state.engine)
@@ -101,5 +122,24 @@ def test_sqlite_foreign_keys_reject_missing_and_cross_session_references(app):
             db.commit()
         db.rollback()
         db.add(Approval(id="approval-cross-session", session_id="session-1", proposal_id="proposal-1", target_id="target-2", protected_hash="b" * 64, expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc)))
+        with pytest.raises(IntegrityError):
+            db.commit()
+
+
+def test_action_rejects_approval_for_different_proposal_in_same_session(app):
+    Base.metadata.create_all(app.state.engine)
+    expires = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    with app.state.session_factory() as db:
+        db.add(LabSession(id="session-1"))
+        db.commit()
+        db.add(AuthorizedTarget(id="target-1", session_id="session-1", address="192.168.56.10", authorization_source="private_lab", expires_at=expires))
+        db.add_all([
+            Proposal(id="proposal-1", session_id="session-1", action_name="inspect_http_headers", arguments_json='{"target_id":"target-1","port":80}', finding_ids_json='["finding-1"]', reason="test", learning_goal="test"),
+            Proposal(id="proposal-2", session_id="session-1", action_name="inspect_tls_certificate", arguments_json='{"target_id":"target-1","port":443}', finding_ids_json='["finding-2"]', reason="test", learning_goal="test"),
+        ])
+        db.commit()
+        db.add(Approval(id="approval-1", session_id="session-1", proposal_id="proposal-1", target_id="target-1", protected_hash="c" * 64, expires_at=expires))
+        db.commit()
+        db.add(Action(id="action-invalid", session_id="session-1", proposal_id="proposal-2", approval_id="approval-1", name="inspect_tls_certificate", arguments_json='{"target_id":"target-1","port":443}'))
         with pytest.raises(IntegrityError):
             db.commit()

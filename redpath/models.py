@@ -146,6 +146,9 @@ class Approval(Timestamped, Base):
     __tablename__ = "approvals"
     __table_args__ = (
         UniqueConstraint("id", "session_id", name="uq_approval_session"),
+        UniqueConstraint(
+            "id", "proposal_id", "session_id", name="uq_approval_proposal_session"
+        ),
         ForeignKeyConstraint(
             ["proposal_id", "session_id"],
             ["proposals.id", "proposals.session_id"],
@@ -176,9 +179,9 @@ class Action(Timestamped, Base):
             name="fk_action_proposal_session",
         ),
         ForeignKeyConstraint(
-            ["approval_id", "session_id"],
-            ["approvals.id", "approvals.session_id"],
-            name="fk_action_approval_session",
+            ["approval_id", "proposal_id", "session_id"],
+            ["approvals.id", "approvals.proposal_id", "approvals.session_id"],
+            name="fk_action_exact_approval",
         ),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

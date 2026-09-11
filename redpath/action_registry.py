@@ -1,5 +1,8 @@
 """Typed validation boundary between untrusted AI output and policy/persistence."""
 
+import hashlib
+import hmac
+import json
 from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
@@ -72,3 +75,26 @@ def validate_untrusted_proposal(
         learning_goal=proposal.learning_goal,
         requires_approval=True,
     )
+
+
+def action_protected_hash(proposal: ValidatedProposal) -> str:
+    """Bind approval to the canonical action name and validated arguments."""
+
+    protected = {
+        "action_name": proposal.action_name,
+        "arguments": proposal.arguments,
+    }
+    canonical = json.dumps(
+        protected, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def revalidate_approval_before_execution(
+    proposal: ValidatedProposal, *, approved_protected_hash: str
+) -> None:
+    """Fail closed if action name or arguments changed after user approval."""
+
+    current_hash = action_protected_hash(proposal)
+    if not hmac.compare_digest(current_hash, approved_protected_hash):
+        raise ValueError("action no longer matches the exact approved name and arguments")
