@@ -54,6 +54,14 @@ section { scroll-margin-top: 1rem; }
 .notice[data-state="error"] { border-color: var(--error); color: var(--error); }
 .placeholder { margin-top: 1rem; }
 footer { border-top: 1px solid var(--border); color: var(--muted); padding-block: 1.5rem; }
+form { display: grid; gap: 1rem; max-width: 44rem; }
+label { display: grid; gap: .35rem; font-weight: 650; }
+input, select { border: 1px solid #8da0ad; border-radius: .4rem; padding: .65rem; font: inherit; }
+.checkbox { display: flex; align-items: flex-start; font-weight: 500; }
+.checkbox input { margin-top: .25rem; }
+.table-wrap { overflow-x: auto; margin-top: 1rem; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: 1px solid var(--border); padding: .7rem; text-align: left; }
 
 @media (max-width: 46rem) {
   .site-header { align-items: start; flex-direction: column; gap: 1.25rem; }

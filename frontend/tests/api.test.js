@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ApiError, RedPathApi, normalizeHealth } from "../api.js";
+import { ApiError, RedPathApi, normalizeFinding, normalizeHealth } from "../api.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -78,4 +78,26 @@ test("powered-off and not-created Kali states are safe on-demand states", () => 
       detail: "Available on demand for an approved action.",
     });
   }
+});
+
+test("session creation keeps lesson and target separate", async () => {
+  let request;
+  const api = new RedPathApi({ fetchImpl: async (url, options) => { request = { url, body: JSON.parse(options.body) }; return jsonResponse({ id: "session-1" }); } });
+  await api.createSession({ lesson_url: "https://example.test/lesson", target: "192.168.56.20" });
+  assert.equal(request.url, "/api/v1/sessions");
+  assert.equal(request.body.lesson_url, "https://example.test/lesson");
+  assert.equal(request.body.target, "192.168.56.20");
+});
+
+test("scan import encodes session identifier", async () => {
+  let url;
+  const api = new RedPathApi({ fetchImpl: async (value) => { url = value; return jsonResponse({ findings: [] }); } });
+  await api.importScan("session /1", { filename: "scan.xml", xml_text: "<nmaprun/>" });
+  assert.equal(url, "/api/v1/sessions/session%20%2F1/scan-import");
+});
+
+test("finding normalization keeps bounded evidence fields", () => {
+  assert.deepEqual(normalizeFinding({ id: "finding-1", state: "observed", protocol: "tcp", port: 80, service_hint: "http", evidence_source: "scan-1" }), {
+    id: "finding-1", state: "observed", protocol: "tcp", port: 80, service: "http", source: "scan-1",
+  });
 });

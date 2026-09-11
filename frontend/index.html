@@ -57,18 +57,35 @@
       </div>
     </section>
 
-    <section id="session" class="placeholder" aria-labelledby="session-title">
-      <p class="eyebrow">NEXT MILESTONE</p>
+    <section id="session" aria-labelledby="session-title">
+      <p class="eyebrow">AUTHORIZED SESSION</p>
       <h2 id="session-title">Start an authorized lab session</h2>
       <p>The lesson link teaches you what to do. The target address identifies the separate system you have permission to test.</p>
-      <button type="button" disabled aria-describedby="session-note">Create session</button>
-      <p id="session-note" class="detail">Session creation will connect when the shared API contract is available.</p>
+      <form id="session-form">
+        <label>Lesson URL <input name="lesson_url" type="url" required placeholder="https://tryhackme.com/room/example"></label>
+        <p class="detail">This is learning material only. It is never treated as the scan target.</p>
+        <label>Authorized target <input name="target" required inputmode="decimal" placeholder="192.168.56.20"></label>
+        <label>Learning objective <input name="objective" required maxlength="300" placeholder="Understand the services exposed by this lab host"></label>
+        <label>Session length <select name="expires_in_minutes"><option value="30">30 minutes</option><option value="60" selected>1 hour</option><option value="120">2 hours</option></select></label>
+        <label class="checkbox"><input name="authorization_confirmed" type="checkbox" required> I own this target or have explicit permission to test it.</label>
+        <button type="submit">Create session</button>
+      </form>
+      <div id="session-message" class="notice" role="status" aria-live="polite">No active session.</div>
     </section>
 
-    <section id="evidence" class="placeholder" aria-labelledby="evidence-title">
+    <section id="evidence" aria-labelledby="evidence-title">
       <p class="eyebrow">EVIDENCE</p>
-      <h2 id="evidence-title">No scan imported</h2>
+      <h2 id="evidence-title">Import an Nmap XML scan</h2>
       <p>Observed scan facts, AI inferences, and verified results will remain clearly separated here.</p>
+      <form id="scan-form">
+        <label>Nmap XML file <input id="scan-file" name="scan" type="file" accept=".xml,application/xml,text/xml" required disabled></label>
+        <button type="submit" disabled>Import evidence</button>
+      </form>
+      <div id="evidence-message" class="notice" role="status" aria-live="polite">Create a session before importing evidence.</div>
+      <div class="table-wrap" tabindex="0" aria-label="Imported findings table">
+        <table><thead><tr><th>State</th><th>Port</th><th>Service</th><th>Evidence source</th></tr></thead>
+          <tbody id="findings-body"><tr><td colspan="4">No findings imported.</td></tr></tbody></table>
+      </div>
     </section>
 
     <section id="report" class="placeholder" aria-labelledby="report-title">
