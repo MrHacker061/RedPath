@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" start="1700000000">
+  <host>
+    <status state="up" reason="syn-ack"/>
+    <address addr="192.168.56.20" addrtype="ipv4"/>
+    <hostnames><hostname name="lab-target.local" type="user"/></hostnames>
+    <ports>
+      <port protocol="tcp" portid="22"><state state="open" reason="syn-ack"/><service name="ssh" product="OpenSSH" version="9.2" method="probed" conf="10"/></port>
+      <port protocol="tcp" portid="80"><state state="closed" reason="reset"/><service name="http" method="table" conf="3"/></port>
+      <port protocol="udp" portid="53"><state state="open" reason="udp-response"/><service name="domain" product="dnsmasq" extrainfo="lab fixture" method="probed" conf="10"/></port>
+    </ports>
+  </host>
+  <runstats><finished time="1700000060"/></runstats>
+</nmaprun>
