@@ -110,25 +110,49 @@ def test_complete_authorized_workflow(desktop_client):
     assert fake_wsl.calls == []
     approval = client.post(f'{proposal_route}/approve')
     assert approval.status_code == 200
+    approval_body = approval.json()
+    assert approval_body['proposal_id'] == proposal['id']
+    assert approval_body['approval_id']
     result = client.post(f'{proposal_route}/run')
     assert result.status_code == 200, result.text
-    assert result.json()['status'] == 'completed'
-    assert result.json()['cleanup_status'] == 'completed'
-    assert result.json()['evidence'][0]['target_address'] == '192.168.56.20'
+    result_body = result.json()
+    assert result_body['status'] == 'completed'
+    assert result_body['cleanup_status'] == 'completed'
+    assert result_body['evidence'][0]['target_address'] == '192.168.56.20'
+    assert result_body['action_id']
     assert len(fake_wsl.calls) == 1
     assert client.post(f'{proposal_route}/run').status_code == 409
     assert len(fake_wsl.calls) == 1
     audit = client.get(f'{route}/audit-history?limit=100')
     assert audit.status_code == 200
-    assert {'action.started', 'action.completed'} <= {
-        event['event_type'] for event in audit.json()['events']
+    action_events = {
+        event['event_type']: event['details']
+        for event in audit.json()['events']
+        if event['event_type'] in {'action.started', 'action.completed'}
     }
+    assert set(action_events) == {'action.started', 'action.completed'}
+    for details in action_events.values():
+        assert details['action_id'] == result_body['action_id']
+        assert details['proposal_id'] == proposal['id']
+        assert details['approval_id'] == approval_body['approval_id']
     assert client.post(f'{route}/close').status_code == 200
     report = client.get(f'{route}/report')
     assert report.status_code == 200
-    assert report.json()['session_state'] == 'completed'
-    assert report.json()['execution_authorized'] is False
-    assert report.json()['approvals'][0]['used'] is True
-    assert report.json()['audit_event_count'] >= len(audit.json()['events'])
+    report_body = report.json()
+    assert report_body['session_state'] == 'completed'
+    assert report_body['execution_authorized'] is False
+    assert report_body['proposals'] == [{
+        'proposal_id': proposal['id'],
+        'action_name': proposal['action_name'],
+        'policy_allowed': True,
+        'policy_code': recommendation.json()['policy_decision']['code'],
+    }]
+    assert report_body['approvals'] == [{
+        'proposal_id': proposal['id'],
+        'status': 'approved',
+        'expires_at': approval_body['expires_at'],
+        'used': True,
+    }]
+    assert report_body['audit_event_count'] >= len(audit.json()['events'])
     for response in (result, audit, report):
         assert 'FAKE_RAW_OUTPUT' not in response.text

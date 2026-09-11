@@ -153,6 +153,7 @@ def _persist_result(
         f"action.{status}",
         action_id=action.id,
         proposal_id=action.proposal_id,
+        approval_id=action.approval_id,
         status=status,
         exit_code=exit_code,
         cleanup_status=cleanup_status,
@@ -297,6 +298,7 @@ def run_approved_action(
     )
     approval.used_at = _now()
     db.add(action)
+    db.flush()
     audit(
         db,
         item.id,

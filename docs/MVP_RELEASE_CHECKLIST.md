@@ -7,8 +7,8 @@ not publish, sign, or distribute an artifact.
 
 | Check | Status | Evidence |
 | --- | --- | --- |
-| Fake-only session-to-report workflow | verified | `tests/test_desktop_workflow.py` replaces setup, model, WSL, and action execution with local fakes. |
-| Installer policy | verified | `tests/Test-Installer.ps1` checks per-user x64 metadata, shortcuts, first-run launch, and the absence of download or destructive uninstall hooks. |
+| Fake-only session-to-report workflow | verified | `tests/test_desktop_workflow.py` replaces setup, model, WSL, and action execution with local fakes, and binds approval, proposal, and action IDs through audit events and report entries. |
+| Installer policy | verified | `tests/Test-Installer.ps1` allowlists only approved installer sections, payload destination, shortcuts, and launch entry; it rejects lifecycle deletion sections, flags, and preserved-data deletion references. |
 | Installer unavailable-prerequisite behavior | verified | `tests/Test-Installer.ps1` invokes the build script with a nonexistent compiler and requires exit code 2 plus `INSTALLER_BUILD_PREREQUISITE`. |
 | Full automated suite | verified | `python -m pytest`: 287 passed (two third-party TestClient deprecation warnings). |
 | Frontend suite | verified | `node --test frontend/tests/*.test.js`: 65 passed. |
@@ -25,7 +25,7 @@ where applicable. They are not substituted by the fake-only test suite.
 | Installer launch from Start menu | not run | Install the final x64 installer on a clean Windows 11 x64 account. |
 | Ollama consent and install | not run | Confirm the consent gate, pinned download, checksum verification, and completed stage. |
 | Default model pull | not run | Confirm progress, cancellation, retry, and local model detection. |
-| Download-size disclosure | failed | The current setup API and manifest do not expose an exact model or Kali transfer-size field before consent. Add and verify it before release. |
+| Download-size disclosure | failed | The current setup API, manifest, and UI do not expose an exact model or Kali transfer-size field before consent. Add and verify it before release. |
 | WSL enablement and restart recovery | not run | Approve the Windows prompt, restart if requested, and resume setup. |
 | Managed Kali import | not run | Confirm only `RedPath-Kali` is accepted and health recovers after import. |
 | Native application window | not run | Confirm a single local window launches and the service remains loopback-only. |
@@ -48,9 +48,27 @@ does not use the configured local model by default. This is confirmed by
 It is outside Task 8's installer/documentation scope and must be resolved or
 explicitly accepted before claiming the model-backed MVP workflow is complete.
 
-The setup manifest also lacks a download-size field, so the UI cannot disclose
-an exact model or Kali transfer size before consent. This is outside Task 8's
-installer/documentation scope but blocks the corresponding product requirement.
+The setup manifest and API lack a download-size field, so the UI cannot disclose
+an exact model or Kali transfer size before consent. This blocks the
+corresponding product requirement.
+
+## Source and runtime binding
+
+The installer baseline below is bound to commit
+`cda4aac2947b55aae1cc6b580f46309d15df30d8` (`feat: add Windows MVP installer
+and release checks`). The runtime values are the local verification host, not a
+claim about a released installer.
+
+| Item | Bound value |
+| --- | --- |
+| Python runtime | CPython 3.14.7 |
+| Node runtime | v24.19.0 |
+| PowerShell runtime | 7.6.5 |
+| PyInstaller build pin | 6.22.2; absent on this host |
+| pywebview build pin | 6.2.1; absent on this host |
+| Inno Setup requirement | 6.3 or newer; `ISCC.exe` absent on this host |
+| Ollama setup artifact | 0.34.0 |
+| Managed Kali artifact | 2026.2 |
 
 ## Release record
 
@@ -60,7 +78,7 @@ machine evidence.
 | Field | Value |
 | --- | --- |
 | Candidate version | 0.1.0 |
-| Commit | pending Task 8 commit |
+| Task 8 installer baseline | cda4aac2947b55aae1cc6b580f46309d15df30d8 |
 | Installer path | not built |
 | Installer SHA-256 | not available |
 | Executable path | not built |

@@ -35,11 +35,34 @@ provider selection unchanged; it is a release gap documented in
 `docs/MVP_RELEASE_CHECKLIST.md`.
 
 The setup manifest and API also omit exact pre-consent download-size metadata.
-The guide gives a practical capacity estimate and the checklist records the
-missing product disclosure as a separate release blocker.
+The guide does not publish an unsupported size estimate, and the checklist
+records the missing product disclosure as a separate release blocker.
 
 ## Non-actions
 
-No installer, desktop executable, model, managed environment, target action,
-or remote download was created or run by the fake-only test. No artifact was
-published, signed, pushed, or released.
+The fake-only test did not run a real external target action or process. No
+artifact was published, signed, pushed, or released.
+
+## Correction round 1
+
+- Corrected the install guide to describe only the current Ollama, model, WSL2,
+  and managed-Kali refresh, repair, and cancel controls. It no longer claims
+  storage/final stages, progress, pin display, Retry, or View Details controls.
+- Recorded that exact pre-consent model and Kali download sizes are unavailable
+  from the current API, manifest, and UI; the checklist retains this as a
+  release blocker rather than publishing an unsupported estimate.
+- Extended the fake-only workflow assertion from approval through the exact
+  action ID, action-started/action-completed audit events, and proposal-bound
+  report entries. The completion audit now records `approval_id`, and the start
+  audit flushes the generated action ID before it is recorded.
+- Replaced the installer-policy denylist with allowed installer sections,
+  approved payload destination, exact shortcut/launch entries, and adversarial
+  checks for lifecycle deletion sections, flags, and preserved-data deletion.
+- Bound the release checklist baseline to `cda4aac` and recorded the current
+  Python, Node, PowerShell, tool pins, and setup artifact versions.
+
+Verification for this correction: `python -m pytest` passed 287 tests; the
+frontend suite passed 65 tests; Kali VM, desktop-build, and installer policy
+checks passed; `compileall` and `git diff --check` passed. Both build scripts
+returned their stable exit code 2 prerequisite outcome without installing
+anything.

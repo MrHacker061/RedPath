@@ -12,12 +12,12 @@ MVP accepts private, authorized lab targets and its fixed learning actions only;
 it does not provide a command shell, credential testing, public-target testing,
 or exploitation automation.
 
-Have sufficient free space before setup. The default
-`qwen2.5:7b-instruct-q4_K_M` model is about 4.7 GB. The managed Kali image is a
-multi-gigabyte download. Allow at least 20 GB free for the image, extracted
-environment, model, and working data. The release candidate does not yet carry
-an exact Kali-size field into the setup UI, so verify the final artifact's
-transfer size and consent display during the clean-machine release gate.
+Have sufficient free space before setup. The model and managed Kali image are
+large downloads, but the current API, manifest, and UI do not expose an exact
+download-size field before consent. There is no source-bound numeric size to
+publish in this guide. This is a release blocker recorded in the checklist;
+confirm exact transfer and storage requirements only from the final pinned
+release artifacts until the UI exposes them.
 
 ## Install
 
@@ -30,32 +30,30 @@ transfer size and consent display during the clean-machine release gate.
 
 3. Run the installer. It adds a Start menu shortcut and offers an optional
    desktop shortcut.
-4. Let the installer open RedPath. The setup wizard can be left and resumed;
-   completed stages are checked again rather than trusted from a saved status.
+4. Let the installer open RedPath.
 
 Development artifacts are **unsigned** unless the release checklist says
 otherwise. Windows may show a publisher or reputation warning for an unsigned
 development build. Do not bypass a warning unless you independently verified
 the source and installer hash.
 
-## Complete first-run setup
+## Check and repair local components
 
-The in-app wizard shows storage, Ollama, model, WSL2, managed Kali, and final
-health stages. It never installs those large dependencies silently.
+The current setup UI reports four components: Ollama, model, WSL2, and managed
+Kali. Select one component, use **Refresh setup** to reread its status, and use
+**Repair** only after the application's confirmation dialog. A repair is
+synchronous: the UI shows the returned stage status after it finishes. If a
+repair is in progress, the UI offers **Cancel** for that active component.
 
-- Confirm the Ollama step before its pinned installer is downloaded and run.
-- Confirm the model download after reviewing its local storage requirement and
-  progress.
-- WSL2 may require an administrator-approved Windows prompt. A restart may be
-  required before setup can continue.
-- Confirm the managed Kali import only after setup shows the pinned artifact
-  and progress.
+WSL2 may require an administrator-approved Windows prompt and may require a
+restart. Restart RedPath after Windows restarts, then use **Refresh setup**.
+The current UI does not display a downloadable artifact's pinned version,
+checksum, or byte size, and it does not provide a separate Retry or View
+Details control. Do not infer those details from a component card.
 
-If a stage fails, use only the wizard's matching **Retry**, **Repair**, or
-**View Details** action. Restart RedPath after a Windows restart, then reopen
-setup. You can still review imported evidence when the model or managed Kali
-stage needs attention; recommendations or action execution remain unavailable
-until their required components are healthy.
+You can still review imported evidence when the model or managed Kali component
+needs attention. Recommendations or action execution remain unavailable until
+their required component is healthy.
 
 ## Use the guided lab workflow
 
