@@ -1,4 +1,5 @@
 from enum import StrEnum
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -73,3 +74,58 @@ class HealthResponse(StrictModel):
     version: str
     database: Literal["ok", "unavailable"]
     services: dict[Literal["fastapi", "ollama", "kali"], ComponentHealth]
+
+
+class SessionCreate(StrictModel):
+    authorization_confirmed: bool
+    expires_at: datetime
+
+
+class SessionSummary(StrictModel):
+    id: str
+    state: SessionState
+    authorization_confirmed: bool
+    expires_at: datetime
+    created_at: datetime
+
+
+class LessonSourceCreate(StrictModel):
+    url: str = Field(min_length=1, max_length=2048)
+    title: str | None = Field(default=None, max_length=250)
+
+
+class LessonSourceContract(LessonSourceCreate):
+    id: str
+
+
+class AuthorizedTargetCreate(StrictModel):
+    address: str = Field(min_length=1, max_length=255)
+    authorization_source: str = Field(min_length=1, max_length=100)
+    expires_at: datetime
+
+
+class AuthorizedTargetContract(AuthorizedTargetCreate):
+    id: str
+    locked: bool
+
+
+class SessionDetail(SessionSummary):
+    lesson_source: LessonSourceContract | None = None
+    target: AuthorizedTargetContract | None = None
+
+
+class ScanImportRequest(StrictModel):
+    filename: str = Field(min_length=1, max_length=255, pattern=r"^[^/\\]+\.xml$")
+    xml_text: str = Field(min_length=1, max_length=1_000_000)
+
+
+class ScanImportContract(StrictModel):
+    id: str
+    source_type: Literal["nmap_xml"]
+    content_hash: str
+    created_at: datetime
+
+
+class ScanImportResponse(StrictModel):
+    scan_import: ScanImportContract
+    findings: list[NormalizedFinding]
