@@ -21,7 +21,7 @@ body { margin: 0; background: radial-gradient(circle at top right, #15352c 0, va
 a { color: var(--accent); }
 button { border: 1px solid var(--accent); border-radius: .55rem; background: var(--accent); color: #04120d; cursor: pointer; font: inherit; font-weight: 700; padding: .7rem 1rem; }
 button:hover { background: #8aebc5; }
-button:focus-visible, a:focus-visible { outline: 3px solid var(--warning); outline-offset: 3px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--warning); outline-offset: 3px; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 .skip-link { background: var(--warning); color: #171006; left: 1rem; padding: .65rem; position: absolute; top: -5rem; z-index: 2; }
 .skip-link:focus { top: 1rem; }
@@ -40,6 +40,9 @@ main { padding-block: 2rem 5rem; }
 section { scroll-margin-top: 1rem; }
 .section-heading { align-items: center; display: flex; gap: 1rem; justify-content: space-between; }
 .health-grid { display: grid; gap: 1rem; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.setup-grid { display: grid; gap: .75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 1rem; }
+.setup-grid article { border: 1px solid var(--border); border-radius: .55rem; padding: .75rem; }
+.setup-grid p { color: var(--muted); margin-bottom: 0; overflow-wrap: anywhere; }
 .health-card, .placeholder { background: color-mix(in srgb, var(--surface) 93%, transparent); border: 1px solid var(--border); border-radius: 1rem; padding: 1.25rem; }
 .card-title { align-items: center; display: flex; gap: .75rem; justify-content: space-between; }
 .health-card p { color: var(--muted); }
@@ -89,6 +92,7 @@ dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
 @media (max-width: 46rem) {
   .site-header { align-items: start; flex-direction: column; gap: 1.25rem; }
   .health-grid { grid-template-columns: 1fr; }
+  .setup-grid { grid-template-columns: 1fr; }
   .section-heading { align-items: start; flex-direction: column; margin-bottom: 1rem; }
   .recommendation-grid { grid-template-columns: 1fr; }
   .emergency-control { align-items: stretch; flex-direction: column; }

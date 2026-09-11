@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ApiError, RedPathApi, normalizeFinding, normalizeHealth } from "../api.js";
+import { ApiError, RedPathApi, normalizeExplanation, normalizeFinding, normalizeHealth } from "../api.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -162,8 +162,39 @@ test("audit history and learning report reads remain session scoped", async () =
   ]);
 });
 
+test("setup, diagnostics, and execution client requests use only fixed routes and bodies", async () => {
+  const requests = [];
+  const api = new RedPathApi({ fetchImpl: async (url, options) => {
+    requests.push({ url, method: options.method || "GET", body: options.body });
+    return jsonResponse({});
+  } });
+  await api.getSetup();
+  await api.getDiagnostics();
+  await api.repairSetup("kali");
+  await api.cancelSetup("kali");
+  await api.runProposal("session /1", "proposal /1");
+  assert.deepEqual(requests, [
+    { url: "/api/v1/setup", method: "GET", body: undefined },
+    { url: "/api/v1/diagnostics", method: "GET", body: undefined },
+    { url: "/api/v1/setup/kali/repair", method: "POST", body: '{"consent":true}' },
+    { url: "/api/v1/setup/kali/cancel", method: "POST", body: undefined },
+    { url: "/api/v1/sessions/session%20%2F1/proposals/proposal%20%2F1/run", method: "POST", body: undefined },
+  ]);
+  assert.throws(() => api.repairSetup("shell"), /unavailable/i);
+});
+
 test("finding normalization keeps bounded evidence fields", () => {
   assert.deepEqual(normalizeFinding({ id: "finding-1", state: "observed", protocol: "tcp", port: 80, service_hint: "http", evidence_source: "scan-1" }), {
     id: "finding-1", state: "observed", protocol: "tcp", port: 80, service: "http", source: "scan-1",
   });
+});
+
+test("explanation normalization preserves injection as bounded literal text", () => {
+  const learning = normalizeExplanation({
+    execution_authorized: false,
+    explanations: [{ summary: "<script>not markup</script>", what_it_means: "Observed only.", what_it_does_not_prove: "No access proven." }],
+    missing_evidence: [],
+  });
+  assert.equal(learning.explanations[0].summary, "<script>not markup</script>");
+  assert.throws(() => normalizeExplanation({ execution_authorized: false, explanations: [{ summary: "x".repeat(1001), what_it_means: "a", what_it_does_not_prove: "b" }], missing_evidence: [] }), /unavailable/i);
 });

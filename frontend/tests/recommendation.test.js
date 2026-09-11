@@ -125,7 +125,7 @@ test("workflow prevents a duplicate approval request and becomes approved", asyn
   resolveApproval({ proposal_id: "proposal-1", status: "approved", approval_id: "approval-1", expires_at: "2030-01-01T00:00:00Z" });
   assert.equal(await first, true);
   assert.equal(controller.state.status, "approved");
-  assert.equal(controller.state.executionAvailable, false);
+  assert.equal(controller.state.executionAvailable, true);
 });
 
 test("workflow blocks decisions for a policy-rejected proposal", async () => {
@@ -258,4 +258,42 @@ test("proposal renderer disables only approval when emergency stop is active", (
   assert.equal(elements.controls.hidden, false);
   assert.equal(elements.approve.disabled, true);
   assert.equal(elements.reject.disabled, false);
+});
+
+test("run stays disabled until current approval and a confirmed clear stop", () => {
+  const elements = {
+    controls: new FakeNode(), approve: new FakeNode("button"), reject: new FakeNode("button"),
+    run: new FakeNode("button"), message: new FakeNode(),
+  };
+  const approved = { status: "approved", busy: false, emergencyStopActive: false, executionAvailable: true, message: "Approved.", receipt: { expiresAt: "2030-01-01T00:00:00Z" } };
+  workflow.renderProposalState(elements, approved, false);
+  assert.equal(elements.run.disabled, true);
+  workflow.renderProposalState(elements, approved, true);
+  assert.equal(elements.run.disabled, false);
+});
+
+test("run requires native confirmation and sends only the stored exact proposal", async () => {
+  const calls = [];
+  const controller = new workflow.ProposalWorkflow({
+    api: { approveProposal: async () => ({ proposal_id: "proposal-1", status: "approved", approval_id: "approval-1", expires_at: "2030-01-01T00:00:00Z" }), runProposal: async (...args) => { calls.push(args); return { action_id: "action-1", status: "completed", exit_code: 0, parser: "tcp_connection_v1", evidence: [], cleanup_status: "completed" }; } },
+    now: () => Date.parse("2029-01-01T00:00:00Z"),
+    confirmRun: () => false,
+  });
+  controller.setEmergencyStop(false);
+  controller.load(workflow.normalizeRecommendation(response));
+  await controller.decide("approve");
+  assert.equal(controller.state.executionAvailable, true);
+  assert.equal(await controller.run(), false);
+  assert.deepEqual(calls, []);
+  controller.confirmRun = () => true;
+  assert.equal(await controller.run(), true);
+  assert.deepEqual(calls, [["session-1", "proposal-1"]]);
+  assert.equal(controller.state.status, "completed");
+});
+
+test("execution result normalization rejects unsafe results", () => {
+  assert.throws(() => workflow.normalizeExecutionResult({ action_id: "a", status: "completed", exit_code: 0, parser: "shell", evidence: [], cleanup_status: "completed" }), /unavailable/i);
+  const result = workflow.normalizeExecutionResult({ action_id: "a", status: "completed", exit_code: 0, parser: "tcp_connection_v1", evidence: [{ kind: "tcp_connection", action_name: "check_tcp_connection", target_id: "target-1", target_address: "<script>x</script>", port: 22, outcome: "succeeded", output_truncated: false, http_status: null, failure_category: null, raw_output: "never" }], cleanup_status: "completed" }, "check_tcp_connection");
+  assert.equal(result.evidence[0].targetAddress, "<script>x</script>");
+  assert.equal(JSON.stringify(result).includes("never"), false);
 });

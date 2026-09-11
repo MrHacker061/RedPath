@@ -1,4 +1,10 @@
 const DEFAULT_TIMEOUT_MS = 5000;
+const SETUP_COMPONENTS = new Set(["ollama", "model", "wsl", "kali"]);
+
+function setupComponent(component) {
+  if (!SETUP_COMPONENTS.has(component)) throw new TypeError("Setup component is unavailable.");
+  return component;
+}
 
 export class ApiError extends Error {
   constructor(message, { status = null, code = "REQUEST_FAILED" } = {}) {
@@ -20,6 +26,13 @@ export class RedPathApi {
   async getHealth() {
     return this.request("/health");
   }
+
+  getSetup() { return this.request("/setup"); }
+  repairSetup(component) {
+    return this.request(`/setup/${encodeURIComponent(setupComponent(component))}/repair`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ consent: true }) });
+  }
+  cancelSetup(component) { return this.request(`/setup/${encodeURIComponent(setupComponent(component))}/cancel`, { method: "POST" }); }
+  getDiagnostics() { return this.request("/diagnostics"); }
 
   async createSession(session) {
     return this.request("/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(session) });
@@ -51,6 +64,10 @@ export class RedPathApi {
 
   async rejectProposal(sessionId, proposalId) {
     return this.request(`/sessions/${encodeURIComponent(sessionId)}/proposals/${encodeURIComponent(proposalId)}/reject`, { method: "POST" });
+  }
+
+  runProposal(sessionId, proposalId) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/proposals/${encodeURIComponent(proposalId)}/run`, { method: "POST" });
   }
 
   async getEmergencyStop() {
@@ -111,12 +128,31 @@ export function normalizeFinding(finding) {
   const state = ["observed", "inferred", "verified"].includes(finding?.state) ? finding.state : "unknown";
   const port = Number.isInteger(finding?.port) && finding.port >= 1 && finding.port <= 65535 ? finding.port : null;
   return {
-    id: typeof finding?.id === "string" ? finding.id : "unidentified-finding",
+    id: typeof finding?.id === "string" && finding.id.length <= 128 ? finding.id : "unidentified-finding",
     state,
     protocol: ["tcp", "udp"].includes(finding?.protocol) ? finding.protocol : "unknown",
     port,
     service: typeof finding?.service_hint === "string" && finding.service_hint.length <= 80 ? finding.service_hint : "unknown service",
     source: typeof finding?.evidence_source === "string" && finding.evidence_source.length <= 100 ? finding.evidence_source : "unknown source",
+  };
+}
+
+function boundedResponseText(value, maximum = 1000) {
+  if (typeof value !== "string" || !value.trim() || value.length > maximum) throw new TypeError("Learning data is unavailable because its response was invalid.");
+  return value;
+}
+
+export function normalizeExplanation(payload) {
+  if (!payload || payload.execution_authorized !== false || !Array.isArray(payload.explanations) || !Array.isArray(payload.missing_evidence) || payload.explanations.length > 100 || payload.missing_evidence.length > 100) {
+    throw new TypeError("Learning data is unavailable because its response was invalid.");
+  }
+  return {
+    explanations: payload.explanations.map((item) => ({
+      summary: boundedResponseText(item?.summary),
+      whatItMeans: boundedResponseText(item?.what_it_means),
+      whatItDoesNotProve: boundedResponseText(item?.what_it_does_not_prove),
+    })),
+    missingEvidence: payload.missing_evidence.map((item) => boundedResponseText(item, 240)),
   };
 }
 
