@@ -116,6 +116,7 @@ test("workflow prevents a duplicate approval request and becomes approved", asyn
     return new Promise((resolve) => { resolveApproval = resolve; });
   } };
   const controller = new workflow.ProposalWorkflow({ api, now: () => Date.parse("2029-01-01T00:00:00Z") });
+  controller.setEmergencyStop(false);
   controller.load(workflow.normalizeRecommendation(response));
   const first = controller.decide("approve");
   const duplicate = await controller.decide("approve");
@@ -149,6 +150,7 @@ test("workflow marks an expired approval as non-executable", async () => {
     expires_at: "2028-01-01T00:00:00Z",
   }) };
   const controller = new workflow.ProposalWorkflow({ api, now: () => Date.parse("2029-01-01T00:00:00Z") });
+  controller.setEmergencyStop(false);
   controller.load(workflow.normalizeRecommendation(response));
   await controller.decide("approve");
   assert.equal(controller.state.status, "expired");
@@ -167,6 +169,7 @@ test("workflow records rejection and does not expose an execution action", async
 test("workflow replaces backend errors with a bounded frontend message", async () => {
   const api = { approveProposal: async () => { throw new Error("secret backend traceback"); } };
   const controller = new workflow.ProposalWorkflow({ api });
+  controller.setEmergencyStop(false);
   controller.load(workflow.normalizeRecommendation(response));
   await controller.decide("approve");
   assert.equal(controller.state.status, "error");
@@ -197,7 +200,7 @@ test("proposal state renderer enables controls only while a decision is pending"
     reject: new FakeNode("button"),
     message: new FakeNode(),
   };
-  workflow.renderProposalState(elements, { status: "pending", busy: false, message: "Review it." });
+  workflow.renderProposalState(elements, { status: "pending", busy: false, emergencyStopActive: false, message: "Review it." });
   assert.equal(elements.controls.hidden, false);
   assert.equal(elements.approve.disabled, false);
   assert.equal(elements.reject.disabled, false);
@@ -208,4 +211,51 @@ test("proposal state renderer enables controls only while a decision is pending"
   assert.equal(elements.approve.disabled, true);
   assert.equal(elements.reject.disabled, true);
   assert.equal(elements.message.dataset.state, "approved");
+});
+
+test("emergency stop defaults safe and blocks approval locally while preserving rejection", async () => {
+  let approvals = 0;
+  let rejections = 0;
+  const api = {
+    approveProposal: async () => { approvals += 1; },
+    rejectProposal: async () => {
+      rejections += 1;
+      return { proposal_id: "proposal-1", status: "rejected", approval_id: null, expires_at: null };
+    },
+  };
+  const controller = new workflow.ProposalWorkflow({ api });
+  controller.load(workflow.normalizeRecommendation(response));
+  assert.equal(controller.state.emergencyStopActive, true);
+  assert.match(controller.state.message, /emergency stop is active/i);
+  assert.equal(await controller.decide("approve"), false);
+  assert.equal(approvals, 0);
+  assert.equal(await controller.decide("reject"), true);
+  assert.equal(rejections, 1);
+});
+
+test("clearing emergency stop restores the pending proposal guidance", () => {
+  const controller = new workflow.ProposalWorkflow({ api: {} });
+  controller.load(workflow.normalizeRecommendation(response));
+  controller.setEmergencyStop(false);
+  assert.equal(controller.state.emergencyStopActive, false);
+  assert.match(controller.state.message, /approve or reject/i);
+  assert.doesNotMatch(controller.state.message, /emergency stop is active/i);
+});
+
+test("proposal renderer disables only approval when emergency stop is active", () => {
+  const elements = {
+    controls: new FakeNode(),
+    approve: new FakeNode("button"),
+    reject: new FakeNode("button"),
+    message: new FakeNode(),
+  };
+  workflow.renderProposalState(elements, {
+    status: "pending",
+    busy: false,
+    emergencyStopActive: true,
+    message: "Emergency stop is active.",
+  });
+  assert.equal(elements.controls.hidden, false);
+  assert.equal(elements.approve.disabled, true);
+  assert.equal(elements.reject.disabled, false);
 });

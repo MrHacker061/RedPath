@@ -1,5 +1,12 @@
 import { RedPathApi, normalizeFinding, normalizeHealth } from "./api.js";
 import { normalizeRecommendation, ProposalWorkflow, renderProposalState, renderRecommendation } from "./recommendation.js";
+import {
+  EmergencyStopWorkflow,
+  normalizeAuditHistory,
+  normalizeLearningReport,
+  renderEmergencyStop,
+  renderSessionOversight,
+} from "./oversight.js";
 
 const api = new RedPathApi();
 const refreshButton = document.querySelector("#refresh-health");
@@ -32,6 +39,22 @@ const proposalElements = {
   reject: document.querySelector("#reject-proposal"),
   message: document.querySelector("#proposal-state"),
 };
+const emergencyElements = {
+  activate: document.querySelector("#emergency-stop"),
+  clear: document.querySelector("#clear-emergency-stop"),
+  refresh: document.querySelector("#refresh-emergency-stop"),
+  message: document.querySelector("#emergency-stop-state"),
+};
+const oversightButton = document.querySelector("#refresh-oversight");
+const oversightMessage = document.querySelector("#oversight-message");
+const oversightElements = {
+  summary: document.querySelector("#report-summary"),
+  overview: document.querySelector("#report-overview"),
+  proposals: document.querySelector("#report-proposals"),
+  approvals: document.querySelector("#report-approvals"),
+  audit: document.querySelector("#audit-history"),
+  events: document.querySelector("#audit-events"),
+};
 let activeSessionId = null;
 let recommendationReady = false;
 let recommendationPending = false;
@@ -48,6 +71,16 @@ const proposalWorkflow = new ProposalWorkflow({
     }
   },
 });
+
+const emergencyStopWorkflow = new EmergencyStopWorkflow({
+  api,
+  onChange: (state) => {
+    proposalWorkflow.setEmergencyStop(state.active);
+    renderEmergencyStop(emergencyElements, state);
+  },
+});
+
+renderEmergencyStop(emergencyElements, emergencyStopWorkflow.state);
 
 function resetRecommendation(text) {
   clearTimeout(approvalTimer);
@@ -107,6 +140,40 @@ async function refreshHealth() {
 }
 
 refreshButton.addEventListener("click", refreshHealth);
+emergencyElements.activate.addEventListener("click", () => emergencyStopWorkflow.activate());
+emergencyElements.clear.addEventListener("click", () => emergencyStopWorkflow.clear());
+emergencyElements.refresh.addEventListener("click", () => emergencyStopWorkflow.refresh());
+
+async function refreshOversight() {
+  if (!activeSessionId || oversightButton.disabled) return;
+  oversightButton.disabled = true;
+  oversightButton.setAttribute("aria-busy", "true");
+  oversightMessage.dataset.state = "pending";
+  oversightMessage.textContent = "Loading the bounded learning report and audit history…";
+  try {
+    const sessionId = activeSessionId;
+    const [reportPayload, historyPayload] = await Promise.all([
+      api.getLearningReport(sessionId),
+      api.getAuditHistory(sessionId),
+    ]);
+    if (sessionId !== activeSessionId) throw new TypeError("Session changed.");
+    const report = normalizeLearningReport(reportPayload, sessionId);
+    const history = normalizeAuditHistory(historyPayload, sessionId);
+    renderSessionOversight(oversightElements, report, history);
+    oversightMessage.dataset.state = "healthy";
+    oversightMessage.textContent = "Latest bounded report and audit records loaded.";
+  } catch {
+    oversightElements.summary.hidden = true;
+    oversightElements.audit.hidden = true;
+    oversightMessage.dataset.state = "error";
+    oversightMessage.textContent = "RedPath could not load valid oversight records for this session.";
+  } finally {
+    oversightButton.disabled = !activeSessionId;
+    oversightButton.setAttribute("aria-busy", "false");
+  }
+}
+
+oversightButton.addEventListener("click", refreshOversight);
 
 sessionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -120,6 +187,11 @@ sessionForm.addEventListener("submit", async (event) => {
     await api.addLessonSource(session.id, { url: data.get("lesson_url"), title: data.get("objective") });
     await api.addTarget(session.id, { address: data.get("target"), authorization_source: "user_confirmation", expires_at: expiresAt });
     activeSessionId = session.id;
+    oversightElements.summary.hidden = true;
+    oversightElements.audit.hidden = true;
+    oversightButton.disabled = false;
+    oversightMessage.dataset.state = "";
+    oversightMessage.textContent = "Session created. Load the latest bounded report and audit records when needed.";
     recommendationReady = false;
     resetRecommendation("Import evidence before requesting a recommendation.");
     scanFile.disabled = false;
@@ -214,3 +286,4 @@ proposalElements.approve.addEventListener("click", () => proposalWorkflow.decide
 proposalElements.reject.addEventListener("click", () => proposalWorkflow.decide("reject"));
 
 refreshHealth();
+emergencyStopWorkflow.refresh();

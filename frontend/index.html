@@ -131,16 +131,42 @@
       </div>
 
       <aside class="emergency-control" aria-labelledby="emergency-stop-title">
-        <div><h3 id="emergency-stop-title">Emergency stop</h3><p id="emergency-stop-detail" class="detail">No emergency-stop backend endpoint is available yet.</p></div>
-        <button id="emergency-stop" type="button" disabled aria-describedby="emergency-stop-detail">Emergency stop unavailable</button>
+        <div>
+          <h3 id="emergency-stop-title">Emergency stop</h3>
+          <p id="emergency-stop-detail" class="detail">Blocks new approvals and action starts. It does not confirm that running work was cancelled.</p>
+          <p id="emergency-stop-state" class="notice" role="status" aria-live="polite">Checking status. Approval is disabled until confirmed clear.</p>
+        </div>
+        <div class="emergency-buttons">
+          <button id="emergency-stop" type="button" disabled aria-describedby="emergency-stop-detail">Activate emergency stop</button>
+          <button id="clear-emergency-stop" class="secondary-button" type="button" disabled aria-describedby="emergency-stop-detail">Clear emergency stop</button>
+          <button id="refresh-emergency-stop" class="secondary-button" type="button">Refresh stop status</button>
+        </div>
       </aside>
     </section>
 
     <section id="report" class="placeholder" aria-labelledby="report-title">
-      <p class="eyebrow">LEARNING REPORT</p>
-      <h2 id="report-title">Your session summary will appear here</h2>
+      <div class="section-heading">
+        <div><p class="eyebrow">SESSION OVERSIGHT</p><h2 id="report-title">Report and audit history</h2></div>
+        <button id="refresh-oversight" type="button" disabled>Load latest records</button>
+      </div>
       <p id="report-message">Import evidence to generate a beginner explanation.</p>
       <div id="explanations" aria-live="polite"></div>
+      <div id="oversight-message" class="notice" role="status" aria-live="polite">Create a session before loading records.</div>
+      <div class="oversight-grid">
+        <article id="report-summary" aria-labelledby="report-summary-title" hidden>
+          <h3 id="report-summary-title">Learning report</h3>
+          <p id="report-overview"></p>
+          <h4>Policy proposals</h4>
+          <ul id="report-proposals" aria-label="Policy proposals"></ul>
+          <h4>Approval decisions</h4>
+          <ul id="report-approvals" aria-label="Approval decisions"></ul>
+          <p class="detail">This report summarizes stored records and does not authorize execution.</p>
+        </article>
+        <article id="audit-history" aria-labelledby="audit-history-title" hidden>
+          <h3 id="audit-history-title">Audit history</h3>
+          <ol id="audit-events"></ol>
+        </article>
+      </div>
     </section>
   </main>
 

@@ -92,10 +92,16 @@ export function renderRecommendation(elements, recommendation, documentImpl = do
 export function renderProposalState(elements, state) {
   const canDecide = state.status === "pending" && !state.busy;
   elements.controls.hidden = state.status !== "pending";
-  elements.approve.disabled = !canDecide;
+  elements.approve.disabled = !canDecide || state.emergencyStopActive !== false;
   elements.reject.disabled = !canDecide;
   elements.message.dataset.state = state.status;
   elements.message.textContent = state.message;
+}
+
+function pendingProposalMessage(emergencyStopActive) {
+  return emergencyStopActive
+    ? "Emergency stop is active. Approval is disabled; you can still reject this proposal."
+    : "Policy allowed this exact proposal. Approve or reject it below.";
 }
 
 function normalizeDecisionReceipt(payload, expectedProposalId) {
@@ -118,18 +124,20 @@ export class ProposalWorkflow {
     this.api = api;
     this.now = now;
     this.onChange = onChange;
-    this.state = { status: "idle", busy: false, message: "No recommendation requested.", executionAvailable: false };
+    this.state = { status: "idle", busy: false, message: "No recommendation requested.", executionAvailable: false, emergencyStopActive: true };
   }
 
   load(recommendation) {
     const status = recommendation.policyDecision.allowed ? "pending" : "rejected";
+    const emergencyStopActive = this.state.emergencyStopActive !== false;
     this.state = {
       status,
       busy: false,
       message: status === "pending"
-        ? "Policy allowed this exact proposal. Approve or reject it below."
+        ? pendingProposalMessage(emergencyStopActive)
         : "Policy rejected this proposal. It cannot be approved or executed.",
       executionAvailable: false,
+      emergencyStopActive,
       recommendation,
       receipt: null,
     };
@@ -138,6 +146,7 @@ export class ProposalWorkflow {
 
   async decide(choice) {
     if (this.state.status !== "pending" || this.state.busy || !["approve", "reject"].includes(choice)) return false;
+    if (choice === "approve" && this.state.emergencyStopActive !== false) return false;
     this.state = { ...this.state, busy: true, message: `${choice === "approve" ? "Approving" : "Rejecting"} the exact proposal…` };
     this.emit();
     const { proposal } = this.state.recommendation;
@@ -178,6 +187,16 @@ export class ProposalWorkflow {
       this.state = { ...this.state, status: "expired", executionAvailable: false, message: "The approval has expired. It cannot be executed." };
       this.emit();
     }
+  }
+
+  setEmergencyStop(active) {
+    const emergencyStopActive = active !== false;
+    this.state = {
+      ...this.state,
+      emergencyStopActive,
+      message: this.state.status === "pending" ? pendingProposalMessage(emergencyStopActive) : this.state.message,
+    };
+    this.emit();
   }
 
   emit() {

@@ -132,6 +132,36 @@ test("proposal decisions post the exact encoded proposal path", async () => {
   ]);
 });
 
+test("emergency-stop client uses separate read, activate, and clear endpoints", async () => {
+  const requests = [];
+  const api = new RedPathApi({ fetchImpl: async (url, options) => {
+    requests.push({ url, method: options.method || "GET" });
+    return jsonResponse({ active: options.method === "POST" && !url.endsWith("/clear"), activated_at: null, cleared_at: null });
+  } });
+  await api.getEmergencyStop();
+  await api.activateEmergencyStop();
+  await api.clearEmergencyStop();
+  assert.deepEqual(requests, [
+    { url: "/api/v1/emergency-stop", method: "GET" },
+    { url: "/api/v1/emergency-stop", method: "POST" },
+    { url: "/api/v1/emergency-stop/clear", method: "POST" },
+  ]);
+});
+
+test("audit history and learning report reads remain session scoped", async () => {
+  const requests = [];
+  const api = new RedPathApi({ fetchImpl: async (url, options) => {
+    requests.push({ url, method: options.method || "GET" });
+    return jsonResponse({});
+  } });
+  await api.getAuditHistory("session /1");
+  await api.getLearningReport("session /1");
+  assert.deepEqual(requests, [
+    { url: "/api/v1/sessions/session%20%2F1/audit-history?limit=100", method: "GET" },
+    { url: "/api/v1/sessions/session%20%2F1/report", method: "GET" },
+  ]);
+});
+
 test("finding normalization keeps bounded evidence fields", () => {
   assert.deepEqual(normalizeFinding({ id: "finding-1", state: "observed", protocol: "tcp", port: 80, service_hint: "http", evidence_source: "scan-1" }), {
     id: "finding-1", state: "observed", protocol: "tcp", port: 80, service: "http", source: "scan-1",

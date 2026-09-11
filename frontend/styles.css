@@ -81,6 +81,10 @@ dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
 .secondary-button:hover { background: var(--surface-raised); }
 .emergency-control { align-items: center; display: flex; gap: 1rem; justify-content: space-between; margin-top: 1rem; }
 .emergency-control h3, .emergency-control p { margin-bottom: 0; }
+.emergency-buttons { display: flex; flex-wrap: wrap; gap: .75rem; justify-content: flex-end; }
+.oversight-grid { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 1rem; }
+.oversight-grid article { border-top: 1px solid var(--border); padding-top: 1rem; }
+.oversight-grid li { margin-bottom: .5rem; overflow-wrap: anywhere; }
 
 @media (max-width: 46rem) {
   .site-header { align-items: start; flex-direction: column; gap: 1.25rem; }
@@ -88,6 +92,8 @@ dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
   .section-heading { align-items: start; flex-direction: column; margin-bottom: 1rem; }
   .recommendation-grid { grid-template-columns: 1fr; }
   .emergency-control { align-items: stretch; flex-direction: column; }
+  .emergency-buttons { justify-content: flex-start; }
+  .oversight-grid { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

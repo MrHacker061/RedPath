@@ -53,6 +53,26 @@ export class RedPathApi {
     return this.request(`/sessions/${encodeURIComponent(sessionId)}/proposals/${encodeURIComponent(proposalId)}/reject`, { method: "POST" });
   }
 
+  async getEmergencyStop() {
+    return this.request("/emergency-stop");
+  }
+
+  async activateEmergencyStop() {
+    return this.request("/emergency-stop", { method: "POST" });
+  }
+
+  async clearEmergencyStop() {
+    return this.request("/emergency-stop/clear", { method: "POST" });
+  }
+
+  async getAuditHistory(sessionId) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/audit-history?limit=100`);
+  }
+
+  async getLearningReport(sessionId) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/report`);
+  }
+
   async request(path, options = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);

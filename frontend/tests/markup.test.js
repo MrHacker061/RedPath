@@ -50,9 +50,19 @@ test("exact proposal controls are native buttons with an announced state", () =>
   assert.match(html, /id="proposal-state"[^>]*role="status"[^>]*aria-live="polite"/);
 });
 
-test("emergency stop is visibly unavailable until a backend endpoint exists", () => {
-  assert.match(html, /id="emergency-stop"[^>]*type="button"[^>]*disabled/);
-  assert.match(html, /No emergency-stop backend endpoint is available yet/);
+test("emergency stop has separate accessible activate and clear controls", () => {
+  assert.match(html, /id="emergency-stop"[^>]*type="button"/);
+  assert.match(html, /id="clear-emergency-stop"[^>]*type="button"/);
+  assert.match(html, /id="emergency-stop-state"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /does not confirm that running work was cancelled/i);
+});
+
+test("session oversight provides accessible report and audit regions", () => {
+  assert.match(html, /id="refresh-oversight"[^>]*type="button"/);
+  assert.match(html, /id="report-summary"[^>]*aria-labelledby="report-summary-title"/);
+  assert.match(html, /id="report-proposals"[^>]*aria-label="Policy proposals"/);
+  assert.match(html, /id="report-approvals"[^>]*aria-label="Approval decisions"/);
+  assert.match(html, /id="audit-history"[^>]*aria-labelledby="audit-history-title"/);
 });
 
 test("frontend exposes no execution control", () => {
