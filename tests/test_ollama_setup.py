@@ -1,3 +1,4 @@
+from io import BytesIO
 from pathlib import Path
 from threading import Event
 
@@ -44,6 +45,7 @@ class CancelledProcess:
     def __init__(self, cancelled: Event) -> None:
         self.cancelled = cancelled
         self.terminated = False
+        self.stdout = BytesIO()
 
     def poll(self):
         self.cancelled.set()
@@ -58,6 +60,23 @@ class CancelledProcess:
 
     def kill(self):
         self.returncode = -9
+
+
+class StreamedProcess:
+    def __init__(self) -> None:
+        self.returncode = 0
+        self.polls = 0
+        self.stdout = BytesIO(
+            b'{"completed": 12, "total": 100}\n'
+            b'not json\n'
+            b'{"completed": "57", "total": 100}\n'
+            b'{"completed": 57, "total": 100}\n'
+            b'{"completed": true, "total": 100}\n'
+        )
+
+    def poll(self):
+        self.polls += 1
+        return None if self.polls < 3 else self.returncode
 
 
 def test_ollama_install_requires_consent(tmp_path):
@@ -142,8 +161,21 @@ def test_cancellable_runner_terminates_active_child_and_reports_only_numeric_pro
     assert child.terminated
     assert progress == [(0, None)]
     assert calls[0][1]["shell"] is False
-    assert calls[0][1]["stdout"] is ollama.subprocess.DEVNULL
+    assert calls[0][1]["stdout"] is ollama.subprocess.PIPE
     assert calls[0][1]["stderr"] is ollama.subprocess.DEVNULL
+
+
+def test_runner_emits_valid_intermediate_ollama_progress_without_raw_output(tmp_path, monkeypatch):
+    from redpath_setup import ollama
+
+    monkeypatch.setattr(ollama.subprocess, "Popen", lambda *_args, **_kwargs: StreamedProcess())
+    progress = []
+    result = ollama._run(
+        ["ollama", "pull", "qwen2.5:7b-instruct-q4_K_M"], tmp_path, 600, Event(),
+        lambda done, total: progress.append((done, total)),
+    )
+    assert result.returncode == 0
+    assert progress == [(0, None), (12, 100), (57, 100), (100, 100)]
 
 
 def test_model_pull_requires_consent_before_running_command(tmp_path):
