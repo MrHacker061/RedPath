@@ -102,6 +102,8 @@ def _run_cancellable(
                 raise subprocess.TimeoutExpired(list(argv), timeout)
             try:
                 stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                if cancelled.is_set():
+                    raise WslOperationCancelled()
                 return ProcessResult(process.returncode, stdout or "", stderr or "")
             except subprocess.TimeoutExpired:
                 continue
@@ -257,13 +259,16 @@ class WslSetup:
             return self._cancelled()
         except (OSError, subprocess.TimeoutExpired, WslSetupError):
             return SetupStage("wsl", "failed", "WSL_ENABLE_FAILED", "Windows could not start WSL2 setup.")
+        if cancelled.is_set():
+            return self._cancelled()
         if result.returncode == 3010:
             return SetupStage("wsl", "needs_attention", "RESTART_REQUIRED", "Restart Windows, then return to RedPath setup.")
         if result.returncode != 0:
             return SetupStage("wsl", "failed", "WSL_ENABLE_FAILED", "Windows could not enable WSL2.")
         if _restart_pending(result):
             return SetupStage("wsl", "needs_attention", "RESTART_REQUIRED", "Restart Windows, then return to RedPath setup.")
-        return self.inspect_wsl()
+        stage = self.inspect_wsl()
+        return self._cancelled() if cancelled.is_set() else stage
 
     def install_kali(self, consent: bool, progress: Progress, cancelled: Event) -> SetupStage:
         """Import the verified Kali artifact and write RedPath's fixed marker."""
@@ -303,16 +308,23 @@ class WslSetup:
             return self._cancelled()
         except (OSError, subprocess.TimeoutExpired, WslSetupError):
             return SetupStage("wsl", "failed", "KALI_IMPORT_FAILED", "The managed Kali distribution could not be imported.")
+        if cancelled.is_set():
+            return self._cancelled()
         if imported.returncode != 0:
             return SetupStage("wsl", "failed", "KALI_IMPORT_FAILED", "The managed Kali distribution could not be imported.")
 
         try:
-            marked = self._invoke(
+            marked = self._invoke_cancellable(
                 ("wsl.exe", "--distribution", DISTRIBUTION_NAME, "--exec", "/usr/bin/touch", MANAGED_MARKER),
                 STATUS_TIMEOUT_SECONDS,
+                cancelled,
             )
+        except WslOperationCancelled:
+            return self._cancelled()
         except (OSError, subprocess.TimeoutExpired, WslSetupError):
             return SetupStage("wsl", "failed", "KALI_MARKER_FAILED", "The imported Kali distribution could not be marked safely.")
+        if cancelled.is_set():
+            return self._cancelled()
         if marked.returncode != 0:
             return SetupStage("wsl", "failed", "KALI_MARKER_FAILED", "The imported Kali distribution could not be marked safely.")
         return SetupStage("wsl", "ready", "KALI_READY", "The managed Kali distribution is ready.")

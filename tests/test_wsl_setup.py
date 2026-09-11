@@ -167,6 +167,66 @@ def test_default_cancellable_runner_terminates_then_kills_a_fake_wsl_process(tmp
     assert popen.call_args.kwargs["shell"] is False
 
 
+def test_default_cancellable_runner_rejects_cancel_arriving_during_communicate(tmp_path):
+    from redpath_setup import wsl
+
+    cancelled = Event()
+
+    class CompletingProcess:
+        returncode = 0
+
+        def poll(self):
+            return 0
+
+        def communicate(self, timeout):
+            cancelled.set()
+            return "ready", ""
+
+    with patch("redpath_setup.wsl.subprocess.Popen", return_value=CompletingProcess()):
+        with pytest.raises(wsl.WslOperationCancelled):
+            wsl._run_cancellable(["wsl.exe", "--install", "--no-distribution"], tmp_path, 120, cancelled)
+
+
+def test_enable_does_not_report_ready_after_command_acknowledges_cancellation(tmp_path):
+    from redpath_setup.wsl import WslSetup
+
+    cancelled = Event()
+
+    def cancellable_runner(_argv, _cwd, _timeout, event):
+        event.set()
+        return ProcessResult(0, "", "")
+
+    stage = WslSetup(
+        tmp_path, runner=RecordingRunner(), cancellable_runner=cancellable_runner
+    ).enable(True, cancelled)
+
+    assert (stage.status, stage.code) == ("needs_attention", "CANCELLED")
+
+
+def test_kali_marker_creation_cannot_return_ready_after_acknowledged_cancel(tmp_path):
+    from redpath_setup.wsl import WslOperationCancelled, WslSetup
+
+    cancelled = Event()
+    calls = []
+
+    def cancellable_runner(argv, _cwd, _timeout, event):
+        calls.append(list(argv))
+        if len(calls) == 1:
+            return ProcessResult(0)
+        event.set()
+        raise WslOperationCancelled()
+
+    stage = WslSetup(
+        tmp_path,
+        runner=RecordingRunner([ProcessResult(0, "Default Version: 2\n"), ProcessResult(0, "")]),
+        downloader=verified_kali_download,
+        cancellable_runner=cancellable_runner,
+    ).install_kali(True, lambda *_: None, cancelled)
+
+    assert (stage.status, stage.code) == ("needs_attention", "CANCELLED")
+    assert calls[1] == ["wsl.exe", "--distribution", "RedPath-Kali", "--exec", "/usr/bin/touch", "/etc/redpath-managed"]
+
+
 def test_import_uses_the_active_cancellation_event_without_running_real_wsl(tmp_path):
     from redpath_setup.wsl import WslOperationCancelled, WslSetup
 
