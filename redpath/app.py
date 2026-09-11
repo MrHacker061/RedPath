@@ -1,7 +1,7 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
+from threading import Event, Lock
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -18,9 +18,12 @@ from redpath.nmap_parser import parse_nmap_xml_bytes
 from redpath.runtime import AppPaths
 from redpath.approval_api import router as approval_router
 from redpath.session_api import router as session_router
+from redpath.setup_api import router as setup_router
 from redpath.stop_api import router as stop_router
 from redpath_ai import RuleBasedProvider
-from redpath_kali import KaliActionDispatcher, KaliVMError, KaliVMManager
+from redpath_kali.wsl_actions import WSLActionDispatcher
+from redpath_setup.ollama import OllamaSetup
+from redpath_setup.wsl import WslSetup
 import redpath.models  # noqa: F401
 
 
@@ -49,13 +52,13 @@ def create_app(
     app.state.session_factory = session_factory
     app.state.llm_provider = RuleBasedProvider()
     app.state.execution_fence = ExecutionFence()
-    try:
-        app.state.action_dispatcher = KaliActionDispatcher(
-            KaliVMManager(Path(__file__).resolve().parents[1])
-        )
-    except KaliVMError:
-        logging.getLogger(__name__).exception("Kali action dispatcher is unavailable")
-        app.state.action_dispatcher = None
+    app.state.ollama_setup = OllamaSetup(app_paths.download_dir)
+    app.state.wsl_setup = WslSetup(app_paths.wsl_dir)
+    app.state.action_dispatcher = WSLActionDispatcher(app.state.wsl_setup)
+    app.state.setup_lock = Lock()
+    app.state.setup_cancellations = {
+        "ollama": Event(), "model": Event(), "wsl": Event(), "kali": Event(),
+    }
     def parse_import(xml_text: str, session_id: str, target_id: str, scan_import_id: str, target_address: str):
         result = parse_nmap_xml_bytes(
             xml_text.encode("utf-8"), scan_id=scan_import_id,
@@ -71,6 +74,7 @@ def create_app(
     app.include_router(approval_router)
     app.include_router(stop_router)
     app.include_router(execution_router)
+    app.include_router(setup_router)
     app.mount("/assets", StaticFiles(directory=app_paths.frontend_dir), name="assets")
 
     @app.get("/", include_in_schema=False)
