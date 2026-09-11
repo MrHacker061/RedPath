@@ -43,12 +43,9 @@ class SetupState(_StrictModel):
             return value
         except FileNotFoundError:
             return cls()
-        except (OSError, ValueError, TypeError, ValidationError):
+        except (ValueError, ValidationError):
             state = cls(code="SETUP_STATE_INVALID", detail="Saved setup state was invalid and was reset.")
-            try:
-                state.save(path)
-            except OSError:
-                pass
+            state.save(path)
             return state
 
     def save(self, path: Path) -> None:

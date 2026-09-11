@@ -4,6 +4,7 @@ from .downloads import (
     ArtifactVerificationError,
     DownloadCancelledError,
     DownloadError,
+    HTTPSRedirectHandler,
     InsecureDownloadError,
     download_verified,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "ArtifactVerificationError",
     "DownloadCancelledError",
     "DownloadError",
+    "HTTPSRedirectHandler",
     "InsecureDownloadError",
     "KALI_ARTIFACT",
     "OLLAMA_ARTIFACT",

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 from io import BytesIO
+import json
 from threading import Event
-from urllib.error import URLError
+from urllib.request import Request
 
 import pytest
 
@@ -37,6 +38,16 @@ class FakeResponse:
 
     def geturl(self) -> str:
         return self.url
+
+
+class ChunkedResponse(FakeResponse):
+    def __init__(self, chunks: list[bytes], url: str = "https://example.test/a"):
+        super().__init__(b"".join(chunks), url)
+        self._chunks = iter(chunks)
+        self.headers = {"Content-Length": str(sum(map(len, chunks)))}
+
+    def read(self, _size: int = -1) -> bytes:
+        return next(self._chunks, b"")
 
 
 def fake_opener(body: bytes, url: str = "https://example.test/a"):
@@ -80,10 +91,24 @@ def test_download_reports_progress_and_writes_verified_file(tmp_path):
 
 def test_download_cancellation_removes_partial_file(tmp_path):
     cancelled = Event()
-    cancelled.set()
-    artifact = replace(OLLAMA_ARTIFACT, filename="a.bin")
+    first_chunk = b"first chunk"
+    artifact = replace(OLLAMA_ARTIFACT, filename="a.bin", sha256="0" * 64)
+    progress = []
+
+    def cancel_after_first(done, total):
+        progress.append((done, total))
+        if done == len(first_chunk):
+            cancelled.set()
+
     with pytest.raises(DownloadCancelledError):
-        download_verified(artifact, tmp_path, lambda *_: None, cancelled, opener=fake_opener(b"payload"))
+        download_verified(
+            artifact,
+            tmp_path,
+            cancel_after_first,
+            cancelled,
+            opener=lambda _request: ChunkedResponse([first_chunk, b"second chunk"]),
+        )
+    assert (len(first_chunk), len(first_chunk) + len(b"second chunk")) in progress
     assert not (tmp_path / "a.bin").exists()
 
 
@@ -103,6 +128,23 @@ def test_download_rejects_non_https_url_and_redirect(tmp_path):
         )
 
 
+def test_redirect_handler_rejects_insecure_location_before_following():
+    from redpath_setup.downloads import HTTPSRedirectHandler
+
+    request = Request("https://example.test/a")
+    response = type("Response", (), {"geturl": lambda self: request.full_url})()
+    handler = HTTPSRedirectHandler()
+    with pytest.raises(InsecureDownloadError):
+        handler.redirect_request(
+            request,
+            response,
+            302,
+            "Found",
+            {"Location": "http://insecure.example/a"},
+            "http://insecure.example/a",
+        )
+
+
 def test_setup_state_round_trips_atomically(tmp_path):
     path = tmp_path / "setup.json"
     SetupState(stages={"ollama": SetupStage("ollama", "ready", "OK", "Ready")}).save(path)
@@ -116,6 +158,19 @@ def test_corrupt_setup_state_is_replaced_with_safe_empty_state(tmp_path):
     state = SetupState.load(path)
     assert state.stages == {}
     assert state.code == "SETUP_STATE_INVALID"
+    assert json.loads(path.read_text(encoding="utf-8"))["code"] == "SETUP_STATE_INVALID"
+
+
+def test_setup_state_load_surfaces_storage_errors(tmp_path, monkeypatch):
+    path = tmp_path / "setup.json"
+    path.write_text("{}", encoding="utf-8")
+
+    def fail_read_text(self, **_kwargs):
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(type(path), "read_text", fail_read_text)
+    with pytest.raises(PermissionError):
+        SetupState.load(path)
 
 
 def test_missing_setup_state_starts_empty(tmp_path):

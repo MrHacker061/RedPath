@@ -9,8 +9,8 @@ from pathlib import Path
 from threading import Event
 from tempfile import NamedTemporaryFile
 from typing import Callable
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from .manifest import Artifact
 
@@ -31,6 +31,20 @@ class DownloadCancelledError(DownloadError):
 
 class InsecureDownloadError(DownloadError):
     """The requested URL or redirect was not HTTPS."""
+
+
+class HTTPSRedirectHandler(HTTPRedirectHandler):
+    """Reject insecure redirect destinations before urllib follows them."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirect_url = urljoin(req.full_url, newurl)
+        if urlparse(redirect_url).scheme.lower() != "https":
+            raise InsecureDownloadError("download redirected to a non-HTTPS URL")
+        return super().redirect_request(req, fp, code, msg, headers, redirect_url)
+
+
+def _secure_open(request):
+    return build_opener(HTTPSRedirectHandler()).open(request)
 
 
 def _response_url(response: object, fallback: str) -> str:
@@ -72,7 +86,8 @@ def download_verified(
         if cancelled.is_set():
             raise DownloadCancelledError("download cancelled")
         request = Request(artifact.url, headers={"User-Agent": "RedPath-Setup/1"})
-        with opener(request) as response:
+        active_opener = _secure_open if opener is urlopen else opener
+        with active_opener(request) as response:
             if urlparse(_response_url(response, artifact.url)).scheme != "https":
                 raise InsecureDownloadError("download redirected to a non-HTTPS URL")
             total = _content_length(response)
