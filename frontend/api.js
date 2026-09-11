@@ -21,6 +21,14 @@ export class RedPathApi {
     return this.request("/health");
   }
 
+  async createSession(session) {
+    return this.request("/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(session) });
+  }
+
+  async importScan(sessionId, scan) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/scan-import`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(scan) });
+  }
+
   async request(path, options = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -53,6 +61,19 @@ export class RedPathApi {
       clearTimeout(timeout);
     }
   }
+}
+
+export function normalizeFinding(finding) {
+  const state = ["observed", "inferred", "verified"].includes(finding?.state) ? finding.state : "unknown";
+  const port = Number.isInteger(finding?.port) && finding.port >= 1 && finding.port <= 65535 ? finding.port : null;
+  return {
+    id: typeof finding?.id === "string" ? finding.id : "unidentified-finding",
+    state,
+    protocol: ["tcp", "udp"].includes(finding?.protocol) ? finding.protocol : "unknown",
+    port,
+    service: typeof finding?.service_hint === "string" && finding.service_hint.length <= 80 ? finding.service_hint : "unknown service",
+    source: typeof finding?.evidence_source === "string" && finding.evidence_source.length <= 100 ? finding.evidence_source : "unknown source",
+  };
 }
 
 export function normalizeHealth(payload) {
