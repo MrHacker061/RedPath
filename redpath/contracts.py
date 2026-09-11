@@ -37,12 +37,18 @@ class NormalizedFinding(StrictModel):
 
 
 class AIProposal(StrictModel):
+    """Untrusted wire data from an AI provider; never execute this directly."""
+
     finding_ids: list[str] = Field(min_length=1)
     action_name: str
     arguments: dict[str, Any]
     reason: str
     learning_goal: str
     requires_approval: Literal[True] = True
+
+
+class ComponentHealth(StrictModel):
+    status: Literal["healthy", "degraded", "offline", "standby", "unknown"]
 
 
 class PolicyDecisionContract(StrictModel):
@@ -66,4 +72,4 @@ class HealthResponse(StrictModel):
     service: str
     version: str
     database: Literal["ok", "unavailable"]
-
+    services: dict[Literal["fastapi", "ollama", "kali"], ComponentHealth]

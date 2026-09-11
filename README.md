@@ -26,10 +26,13 @@ execute tools or accept model-generated commands.
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[test]"
 .\.venv\Scripts\python -m pytest tests\test_backend_foundation.py
-.\.venv\Scripts\python -m uvicorn redpath.app:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\redpath-api.exe
 ```
 
 Copy `.env.example` to `.env` for local overrides. The `.env` file is ignored.
+The supported launcher rejects any non-loopback `REDPATH_HOST`. AI proposals are
+untrusted wire data and must pass `validate_untrusted_proposal`, policy review,
+and exact user approval before any later execution component may use them.
 
 The files in `docs`, `scanner`, `tests`, and `vm`, along with this README,
 `.gitignore`, and `.gitattributes`, belong in GitHub. Do not add `.local`,

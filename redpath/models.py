@@ -1,7 +1,16 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from redpath.contracts import EvidenceState, SessionState
@@ -48,6 +57,7 @@ class LessonSource(Timestamped, Base):
 
 class AuthorizedTarget(Timestamped, Base):
     __tablename__ = "authorized_targets"
+    __table_args__ = (UniqueConstraint("id", "session_id", name="uq_target_session"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("lab_sessions.id"), unique=True)
     address: Mapped[str] = mapped_column(String(255))
@@ -58,6 +68,7 @@ class AuthorizedTarget(Timestamped, Base):
 
 class ScanImport(Timestamped, Base):
     __tablename__ = "scan_imports"
+    __table_args__ = (UniqueConstraint("id", "session_id", name="uq_scan_session"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("lab_sessions.id"))
     source_type: Mapped[str] = mapped_column(String(40))
@@ -66,11 +77,23 @@ class ScanImport(Timestamped, Base):
 
 class Finding(Timestamped, Base):
     __tablename__ = "findings"
-    __table_args__ = (UniqueConstraint("scan_import_id", "protocol", "port", name="uq_scan_port"),)
+    __table_args__ = (
+        UniqueConstraint("scan_import_id", "protocol", "port", name="uq_scan_port"),
+        ForeignKeyConstraint(
+            ["target_id", "session_id"],
+            ["authorized_targets.id", "authorized_targets.session_id"],
+            name="fk_finding_target_session",
+        ),
+        ForeignKeyConstraint(
+            ["scan_import_id", "session_id"],
+            ["scan_imports.id", "scan_imports.session_id"],
+            name="fk_finding_scan_session",
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("lab_sessions.id"))
-    target_id: Mapped[str] = mapped_column(ForeignKey("authorized_targets.id"))
-    scan_import_id: Mapped[str] = mapped_column(ForeignKey("scan_imports.id"))
+    target_id: Mapped[str] = mapped_column(String(36))
+    scan_import_id: Mapped[str] = mapped_column(String(36))
     state: Mapped[str] = mapped_column(String(20), default=EvidenceState.OBSERVED.value)
     category: Mapped[str] = mapped_column(String(80))
     protocol: Mapped[str] = mapped_column(String(8))
@@ -98,6 +121,7 @@ class ModelResponse(Timestamped, Base):
 
 class Proposal(Timestamped, Base):
     __tablename__ = "proposals"
+    __table_args__ = (UniqueConstraint("id", "session_id", name="uq_proposal_session"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("lab_sessions.id"))
     model_response_id: Mapped[str | None] = mapped_column(ForeignKey("model_responses.id"))
@@ -120,9 +144,23 @@ class PolicyDecision(Timestamped, Base):
 
 class Approval(Timestamped, Base):
     __tablename__ = "approvals"
+    __table_args__ = (
+        UniqueConstraint("id", "session_id", name="uq_approval_session"),
+        ForeignKeyConstraint(
+            ["proposal_id", "session_id"],
+            ["proposals.id", "proposals.session_id"],
+            name="fk_approval_proposal_session",
+        ),
+        ForeignKeyConstraint(
+            ["target_id", "session_id"],
+            ["authorized_targets.id", "authorized_targets.session_id"],
+            name="fk_approval_target_session",
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    proposal_id: Mapped[str] = mapped_column(ForeignKey("proposals.id"), unique=True)
-    target_id: Mapped[str] = mapped_column(ForeignKey("authorized_targets.id"))
+    session_id: Mapped[str] = mapped_column(ForeignKey("lab_sessions.id"))
+    proposal_id: Mapped[str] = mapped_column(String(36), unique=True)
+    target_id: Mapped[str] = mapped_column(String(36))
     status: Mapped[str] = mapped_column(String(20), default="pending")
     protected_hash: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -131,10 +169,22 @@ class Approval(Timestamped, Base):
 
 class Action(Timestamped, Base):
     __tablename__ = "actions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["proposal_id", "session_id"],
+            ["proposals.id", "proposals.session_id"],
+            name="fk_action_proposal_session",
+        ),
+        ForeignKeyConstraint(
+            ["approval_id", "session_id"],
+            ["approvals.id", "approvals.session_id"],
+            name="fk_action_approval_session",
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("lab_sessions.id"))
-    proposal_id: Mapped[str] = mapped_column(ForeignKey("proposals.id"), unique=True)
-    approval_id: Mapped[str] = mapped_column(ForeignKey("approvals.id"), unique=True)
+    proposal_id: Mapped[str] = mapped_column(String(36), unique=True)
+    approval_id: Mapped[str] = mapped_column(String(36), unique=True)
     name: Mapped[str] = mapped_column(String(100))
     arguments_json: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="pending")
@@ -166,4 +216,3 @@ class Report(Timestamped, Base):
     session_id: Mapped[str] = mapped_column(ForeignKey("lab_sessions.id"), unique=True)
     content: Mapped[str] = mapped_column(Text)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
-

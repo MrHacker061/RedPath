@@ -1,11 +1,17 @@
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import inspect
+from sqlalchemy.exc import IntegrityError
 
+from redpath.action_registry import validate_untrusted_proposal
 from redpath.app import create_app
 from redpath.config import Settings
 from redpath.contracts import AIProposal, NormalizedFinding
+from redpath.database import Base
+from redpath.models import Approval, AuthorizedTarget, Finding, LabSession, Proposal, ScanImport
 
 
 @pytest.fixture
@@ -17,7 +23,13 @@ def test_health_endpoint_and_schema_creation(app):
     with TestClient(app) as client:
         response = client.get("/api/v1/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "redpath-api", "version": "0.1.0", "database": "ok"}
+    payload = response.json()
+    assert {key: payload[key] for key in ("status", "service", "version", "database")} == {"status": "ok", "service": "redpath-api", "version": "0.1.0", "database": "ok"}
+    assert payload["services"] == {
+        "fastapi": {"status": "healthy"},
+        "ollama": {"status": "unknown"},
+        "kali": {"status": "unknown"},
+    }
     assert {"lab_sessions", "authorized_targets", "proposals", "policy_decisions"} <= set(inspect(app.state.engine).get_table_names())
 
 
@@ -45,3 +57,49 @@ def test_ai_proposal_always_requires_approval():
     with pytest.raises(ValidationError):
         AIProposal.model_validate(proposal | {"shell": "arbitrary"})
 
+
+def test_registry_validates_untrusted_action_values_and_backend_references():
+    proposal = AIProposal.model_validate({"finding_ids": ["finding-12"], "action_name": "inspect_http_headers", "arguments": {"target_id": "target-3", "port": 80}, "reason": "Inspect an observed service.", "learning_goal": "Understand HTTP headers.", "requires_approval": True})
+    validated = validate_untrusted_proposal(
+        proposal,
+        authorized_target_id="target-3",
+        available_finding_ids={"finding-12"},
+    )
+    assert validated.arguments == {"target_id": "target-3", "port": 80}
+    with pytest.raises(ValueError, match="authorized session target"):
+        validate_untrusted_proposal(proposal, authorized_target_id="other", available_finding_ids={"finding-12"})
+    with pytest.raises(ValueError, match="outside the session"):
+        validate_untrusted_proposal(proposal, authorized_target_id="target-3", available_finding_ids=set())
+    bad_port = proposal.model_copy(update={"arguments": {"target_id": "target-3", "port": "80"}})
+    with pytest.raises(ValidationError):
+        validate_untrusted_proposal(bad_port, authorized_target_id="target-3", available_finding_ids={"finding-12"})
+    unknown = proposal.model_copy(update={"action_name": "free_form_shell"})
+    with pytest.raises(ValueError, match="unknown registered action"):
+        validate_untrusted_proposal(unknown, authorized_target_id="target-3", available_finding_ids={"finding-12"})
+    extra = proposal.model_copy(update={"arguments": {"target_id": "target-3", "port": 80, "command": "anything"}})
+    with pytest.raises(ValidationError):
+        validate_untrusted_proposal(extra, authorized_target_id="target-3", available_finding_ids={"finding-12"})
+
+
+def test_sqlite_foreign_keys_reject_missing_and_cross_session_references(app):
+    Base.metadata.create_all(app.state.engine)
+    with app.state.engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+
+    with app.state.session_factory() as db:
+        db.add_all([LabSession(id="session-1"), LabSession(id="session-2")])
+        db.commit()
+        db.add_all([
+            AuthorizedTarget(id="target-1", session_id="session-1", address="192.168.56.10", authorization_source="private_lab", expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc)),
+            AuthorizedTarget(id="target-2", session_id="session-2", address="192.168.56.20", authorization_source="private_lab", expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc)),
+        ])
+        db.add(ScanImport(id="scan-1", session_id="session-1", source_type="nmap_xml", content_hash="a" * 64))
+        db.add(Proposal(id="proposal-1", session_id="session-1", action_name="inspect_http_headers", arguments_json='{"target_id":"target-1","port":80}', finding_ids_json='["finding-1"]', reason="test", learning_goal="test"))
+        db.commit()
+        db.add(Finding(id="finding-cross-session", session_id="session-2", target_id="target-1", scan_import_id="scan-1", category="open_port", protocol="tcp", port=80))
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+        db.add(Approval(id="approval-cross-session", session_id="session-1", proposal_id="proposal-1", target_id="target-2", protected_hash="b" * 64, expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc)))
+        with pytest.raises(IntegrityError):
+            db.commit()
