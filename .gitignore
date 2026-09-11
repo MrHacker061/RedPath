@@ -24,10 +24,8 @@ kali-ssh-config
 
 # Codex local configuration
 .codex/
-# Claude Flow runtime data
-.claude-flow/data/
-.claude-flow/logs/
-.claude-flow/policy/state.json
+# Ruflo runtime data
+.claude-flow/
 .swarm/
 # Environment variables
 .env.local
