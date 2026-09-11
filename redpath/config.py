@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     @field_validator("host")
     @classmethod
     def require_loopback(cls, value: str) -> str:
-        if value not in {"127.0.0.1", "localhost", "::1"}:
+        if value != "127.0.0.1":
             raise ValueError("RedPath must bind to a loopback address")
         return value
 
