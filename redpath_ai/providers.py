@@ -117,6 +117,7 @@ class RuleBasedProvider(LLMProvider):
 
 
 Transport = Callable[[str, dict[str, Any] | None, float], dict[str, Any]]
+OLLAMA_MODEL = "qwen2.5:7b-instruct-q4_K_M"
 
 
 @dataclass(frozen=True)
@@ -133,7 +134,7 @@ class OllamaProvider(LLMProvider):
 
     def __init__(
         self,
-        model: str = "qwen2.5:7b-instruct-q4_K_M",
+        model: str = OLLAMA_MODEL,
         base_url: str = "http://127.0.0.1:11434",
         timeout_seconds: float = 20.0,
         invalid_output_retries: int = 1,
