@@ -1,6 +1,7 @@
-from io import BytesIO
+from io import StringIO
 from pathlib import Path
 from threading import Event
+import time
 
 import pytest
 
@@ -45,7 +46,8 @@ class CancelledProcess:
     def __init__(self, cancelled: Event) -> None:
         self.cancelled = cancelled
         self.terminated = False
-        self.stdout = BytesIO()
+        self.stdout = StringIO()
+        self.stderr = StringIO()
 
     def poll(self):
         self.cancelled.set()
@@ -66,17 +68,41 @@ class StreamedProcess:
     def __init__(self) -> None:
         self.returncode = 0
         self.polls = 0
-        self.stdout = BytesIO(
-            b'{"completed": 12, "total": 100}\n'
-            b'not json\n'
-            b'{"completed": "57", "total": 100}\n'
-            b'{"completed": 57, "total": 100}\n'
-            b'{"completed": true, "total": 100}\n'
+        self.stdout = StringIO()
+        self.stderr = StringIO(
+            "\rpulling 8a7fbc4e30f2:  12% |██▏               | 512 MB/4.1 GB\r"
+            "unexpected status\r"
+            "\rpulling invalid:  57% |██████████        |\r"
+            "\rpulling 8a7fbc4e30f2:  57% |██████████        | 2.3 GB/4.1 GB\r"
+            "\rpulling 8a7fbc4e30f2:  101% |██████████████████|\r"
         )
 
     def poll(self):
         self.polls += 1
         return None if self.polls < 3 else self.returncode
+
+
+class InheritedPipe:
+    def __init__(self) -> None:
+        self.closed = Event()
+
+    def readline(self, _size):
+        self.closed.wait()
+        raise ValueError("closed")
+
+    def close(self):
+        self.closed.set()
+
+
+class ExitedProcess:
+    returncode = 0
+
+    def __init__(self, stderr) -> None:
+        self.stdout = StringIO()
+        self.stderr = stderr
+
+    def poll(self):
+        return self.returncode
 
 
 def test_ollama_install_requires_consent(tmp_path):
@@ -161,11 +187,11 @@ def test_cancellable_runner_terminates_active_child_and_reports_only_numeric_pro
     assert child.terminated
     assert progress == [(0, None)]
     assert calls[0][1]["shell"] is False
-    assert calls[0][1]["stdout"] is ollama.subprocess.PIPE
-    assert calls[0][1]["stderr"] is ollama.subprocess.DEVNULL
+    assert calls[0][1]["stdout"] is ollama.subprocess.DEVNULL
+    assert calls[0][1]["stderr"] is ollama.subprocess.PIPE
 
 
-def test_runner_emits_valid_intermediate_ollama_progress_without_raw_output(tmp_path, monkeypatch):
+def test_runner_emits_valid_intermediate_stderr_progress_without_raw_output(tmp_path, monkeypatch):
     from redpath_setup import ollama
 
     monkeypatch.setattr(ollama.subprocess, "Popen", lambda *_args, **_kwargs: StreamedProcess())
@@ -176,6 +202,17 @@ def test_runner_emits_valid_intermediate_ollama_progress_without_raw_output(tmp_
     )
     assert result.returncode == 0
     assert progress == [(0, None), (12, 100), (57, 100), (100, 100)]
+
+
+def test_runner_closes_inherited_progress_pipe_without_unbounded_join(tmp_path, monkeypatch):
+    from redpath_setup import ollama
+
+    pipe = InheritedPipe()
+    monkeypatch.setattr(ollama.subprocess, "Popen", lambda *_args, **_kwargs: ExitedProcess(pipe))
+    started = time.monotonic()
+    ollama._run(["ollama", "pull", "qwen2.5:7b-instruct-q4_K_M"], tmp_path, 600, Event(), lambda *_: None)
+    assert pipe.closed.is_set()
+    assert time.monotonic() - started < 1
 
 
 def test_model_pull_requires_consent_before_running_command(tmp_path):

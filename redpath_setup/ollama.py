@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import re
 import subprocess
 import time
 from collections.abc import Callable, Sequence
@@ -18,8 +18,10 @@ from .manifest import OLLAMA_ARTIFACT
 from .state import SetupStage
 
 INSTALL_TIMEOUT_SECONDS = 600
-MAX_PROGRESS_LINE_BYTES = 4096
+MAX_PROGRESS_LINE_CHARS = 4096
+READER_DRAIN_SECONDS = 0.25
 Progress = Callable[[int, int | None], None]
+_PULL_PROGRESS = re.compile(r"pulling [0-9a-f]{12,64}:\s*(\d{1,3})%")
 
 
 class CommandResult(Protocol):
@@ -34,7 +36,7 @@ class ProcessCancelled(RuntimeError):
     """A setup operation was cancelled while its child process was active."""
 
 
-def _stop(process: subprocess.Popen[bytes]) -> None:
+def _stop(process: subprocess.Popen[str]) -> None:
     process.terminate()
     try:
         process.wait(timeout=5)
@@ -43,33 +45,25 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=5)
 
 
-def _read_progress_lines(stdout, updates: Queue[tuple[int, int]], stopped: Event) -> None:
+def _read_progress_lines(stderr, updates: Queue[int], stopped: Event) -> None:
     while not stopped.is_set():
-        line = stdout.readline(MAX_PROGRESS_LINE_BYTES)
+        try:
+            line = stderr.readline(MAX_PROGRESS_LINE_CHARS)
+        except (OSError, ValueError):
+            return
         if not line:
             return
-        update = _progress_fields(line)
-        if update is None:
-            continue
-        while not stopped.is_set():
-            try:
-                updates.put(update, timeout=0.1)
-                break
-            except Full:
-                pass
+        for update in _progress_fields(line):
+            while not stopped.is_set():
+                try:
+                    updates.put(update, timeout=0.1)
+                    break
+                except Full:
+                    pass
 
 
-def _progress_fields(line: bytes) -> tuple[int, int] | None:
-    try:
-        value = json.loads(line)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(value, dict):
-        return None
-    completed, total = value.get("completed"), value.get("total")
-    if type(completed) is not int or type(total) is not int or not 0 <= completed <= total or total <= 0:
-        return None
-    return completed, total
+def _progress_fields(line: str) -> tuple[int, ...]:
+    return tuple(percent for match in _PULL_PROGRESS.finditer(line) if 0 <= (percent := int(match.group(1))) <= 100)
 
 
 def _run(
@@ -81,49 +75,58 @@ def _run(
         list(argv),
         cwd=cwd,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         shell=False,
     )
-    assert process.stdout is not None
-    updates: Queue[tuple[int, int]] = Queue(maxsize=1)
+    assert process.stderr is not None
+    updates: Queue[int] = Queue(maxsize=1)
     stopped = Event()
-    reader = Thread(target=_read_progress_lines, args=(process.stdout, updates, stopped), daemon=True)
+    reader = Thread(target=_read_progress_lines, args=(process.stderr, updates, stopped), daemon=True)
     reader.start()
-    latest: tuple[int, int] | None = None
+    latest: int | None = None
 
-    def report(update: tuple[int, int]) -> None:
+    def report(update: int) -> None:
         nonlocal latest
         latest = update
-        progress(*update)
+        progress(update, 100)
+
+    def close_reader(join_timeout: float) -> None:
+        stopped.set()
+        process.stderr.close()
+        reader.join(timeout=max(0, join_timeout))
 
     deadline = time.monotonic() + timeout
     while process.poll() is None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            stopped.set()
+            close_reader(0)
             _stop(process)
             raise subprocess.TimeoutExpired(list(argv), timeout)
         if cancelled.is_set():
-            stopped.set()
+            close_reader(min(0.1, remaining))
             _stop(process)
             raise ProcessCancelled()
         try:
             report(updates.get(timeout=min(0.1, remaining)))
         except Empty:
             pass
-    while reader.is_alive():
+    drain_deadline = min(deadline, time.monotonic() + READER_DRAIN_SECONDS)
+    while reader.is_alive() and time.monotonic() < drain_deadline:
         try:
-            report(updates.get(timeout=0.1))
+            report(updates.get(timeout=min(0.05, drain_deadline - time.monotonic())))
         except Empty:
             pass
-    reader.join()
+    close_reader(min(0.1, deadline - time.monotonic()))
     while not updates.empty():
         report(updates.get_nowait())
     if latest is None:
         progress(1, 1)
-    elif latest[0] != latest[1]:
-        progress(latest[1], latest[1])
+    elif latest != 100:
+        progress(100, 100)
     return subprocess.CompletedProcess(list(argv), process.returncode)
 
 
