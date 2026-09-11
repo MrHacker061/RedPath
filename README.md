@@ -238,6 +238,9 @@ remote commands, change the Windows VM, or establish a reverse shell.
 dynamic SSH configuration discovery, and graceful stop. It does not expose
 free-form guest commands or forced power-off. Starts and stops are independently
 verified, and tests inject recorded process output without touching the real VM.
+SSH discovery accepts only `127.0.0.1` and the existing regular private key
+under RedPath's managed Vagrant state. The returned client options disable
+password prompts, keyboard-interactive login, and SSH-agent fallback.
 
 ## State and files
 

@@ -6,6 +6,7 @@ arbitrary guest-command and force-stop features are deliberately absent.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -51,6 +52,7 @@ class SSHConfig:
     user: str
     identity_file: Path
     identities_only: bool
+    client_options: tuple[str, ...]
 
 
 Runner = Callable[[Sequence[str], Path, float], ProcessResult]
@@ -82,7 +84,40 @@ def parse_status(output: str) -> VMState:
         return VMState.OTHER
 
 
-def parse_ssh_config(output: str) -> SSHConfig:
+SAFE_SSH_OPTIONS = (
+    "BatchMode=yes",
+    "PasswordAuthentication=no",
+    "KbdInteractiveAuthentication=no",
+    "PreferredAuthentications=publickey",
+    "IdentitiesOnly=yes",
+    "ForwardAgent=no",
+)
+
+
+def _is_reparse_or_symlink(path: Path) -> bool:
+    """Recognize symlinks and Windows reparse points such as junctions."""
+    try:
+        stat = path.lstat()
+    except OSError:
+        return False
+    attributes = getattr(stat, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return path.is_symlink() or bool(attributes & reparse_flag)
+
+
+def _regular_unlinked_file(path: Path, description: str) -> Path:
+    if _is_reparse_or_symlink(path):
+        raise KaliVMError(f"{description} cannot be a symlink or reparse point")
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise KaliVMError(f"{description} does not exist") from exc
+    if not resolved.is_file():
+        raise KaliVMError(f"{description} must be a regular file")
+    return resolved
+
+
+def parse_ssh_config(output: str, *, managed_state_root: Path | str) -> SSHConfig:
     blocks = re.split(r"(?im)(?=^\s*Host\s+)", output)
     blocks = [b for b in blocks if re.search(r"(?im)^\s*Host\s+kali-headless\s*$", b)]
     if len(blocks) != 1:
@@ -96,8 +131,8 @@ def parse_ssh_config(output: str) -> SSHConfig:
         return values[0].strip().strip('"')
 
     hostname = field("HostName")
-    if hostname not in {"127.0.0.1", "localhost"}:
-        raise KaliVMError("SSH endpoint must use Windows loopback")
+    if hostname != "127.0.0.1":
+        raise KaliVMError("SSH endpoint must be exactly 127.0.0.1")
     try:
         port = int(field("Port"))
     except ValueError as exc:
@@ -107,30 +142,71 @@ def parse_ssh_config(output: str) -> SSHConfig:
     user = field("User")
     if user != "vagrant":
         raise KaliVMError("Unexpected SSH user")
-    identity_file = Path(field("IdentityFile"))
+    identity_text = field("IdentityFile")
+    if identity_text.startswith("\\\\"):
+        raise KaliVMError("SSH identity file cannot use a UNC path")
+    identity_file = Path(identity_text)
     if not identity_file.is_absolute():
         raise KaliVMError("SSH identity file must be absolute")
+    state_root = Path(managed_state_root)
+    if not state_root.is_absolute() or _is_reparse_or_symlink(state_root):
+        raise KaliVMError("Managed Vagrant state root must be an absolute, unlinked directory")
+    try:
+        resolved_state_root = state_root.resolve(strict=True)
+    except OSError as exc:
+        raise KaliVMError("Managed Vagrant state root does not exist") from exc
+    if not resolved_state_root.is_dir():
+        raise KaliVMError("Managed Vagrant state root must be a directory")
+    resolved_identity = _regular_unlinked_file(identity_file, "SSH identity file")
+    try:
+        relative_identity = resolved_identity.relative_to(resolved_state_root)
+    except ValueError as exc:
+        raise KaliVMError("SSH identity file is outside managed Vagrant state") from exc
+    parts = relative_identity.parts
+    if len(parts) < 4 or parts[0] != "machines" or parts[1] != "default" or parts[-1] != "private_key":
+        raise KaliVMError("SSH identity file is not the managed default VM private key")
     identities_only = field("IdentitiesOnly").lower() == "yes"
     if not identities_only:
         raise KaliVMError("SSH must enforce IdentitiesOnly yes")
-    return SSHConfig("kali-headless", hostname, port, user, identity_file, identities_only)
+    return SSHConfig("kali-headless", hostname, port, user, resolved_identity,
+                     identities_only, SAFE_SSH_OPTIONS)
 
 
 class KaliVMManager:
     """Runs only the explicitly allowed lifecycle commands through KaliVM.ps1."""
 
     def __init__(self, repository_root: Path | str, *, runner: Runner = _default_runner,
-                 powershell: str = "powershell.exe") -> None:
-        self.repository_root = Path(repository_root).resolve()
+                 managed_state_root: Path | str | None = None) -> None:
+        configured_root = Path(repository_root)
+        if not configured_root.is_absolute():
+            raise KaliVMError("Repository root must be trusted absolute configuration")
+        if _is_reparse_or_symlink(configured_root):
+            raise KaliVMError("Repository root cannot be a symlink or reparse point")
+        try:
+            self.repository_root = configured_root.resolve(strict=True)
+        except OSError as exc:
+            raise KaliVMError("Repository root does not exist") from exc
+        if not self.repository_root.is_dir():
+            raise KaliVMError("Repository root must be a directory")
         self.vm_directory = self.repository_root / "vm"
         self.script = self.vm_directory / "KaliVM.ps1"
         self.settings = self.vm_directory / "kali-vm.json"
-        self._runner, self._powershell = runner, powershell
+        default_state = Path(os.environ.get("LOCALAPPDATA", "")) / "HeadlessKaliTerminal" / "state"
+        self.managed_state_root = Path(managed_state_root) if managed_state_root is not None else default_state
+        self._runner = runner
         self._validate_installation()
 
     def _validate_installation(self) -> None:
-        if not self.script.is_file() or not self.settings.is_file():
-            raise KaliVMError("Managed Kali script and settings are required")
+        for path, description in (
+            (self.script, "Managed Kali script"),
+            (self.settings, "Managed Kali settings"),
+            (self.vm_directory / "Vagrantfile", "Managed Vagrantfile"),
+        ):
+            resolved = _regular_unlinked_file(path, description)
+            try:
+                resolved.relative_to(self.repository_root)
+            except ValueError as exc:
+                raise KaliVMError(f"{description} escapes the trusted repository") from exc
         try:
             settings = json.loads(self.settings.read_text(encoding="utf-8"))
             vagrantfile = (self.vm_directory / "Vagrantfile").read_text(encoding="utf-8")
@@ -145,7 +221,7 @@ class KaliVMManager:
     def _invoke(self, operation: str, timeout: float) -> str:
         if operation not in {"status", "start", "ssh-config", "stop"}:
             raise KaliVMError(f"Unsupported Kali VM operation: {operation}")
-        command = (self._powershell, "-NoLogo", "-NoProfile", "-NonInteractive",
+        command = ("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
                    "-ExecutionPolicy", "Bypass", "-File", str(self.script), operation)
         result = self._runner(command, self.vm_directory, timeout)
         output = _bounded("\n".join(x for x in (result.stdout, result.stderr) if x))
@@ -167,7 +243,7 @@ class KaliVMManager:
     def discover_ssh_config(self) -> SSHConfig:
         if self.status().state is not VMState.RUNNING:
             raise KaliVMError("SSH configuration is available only while Kali is running")
-        return parse_ssh_config(self._invoke("ssh-config", 30))
+        return parse_ssh_config(self._invoke("ssh-config", 30), managed_state_root=self.managed_state_root)
 
     def stop(self) -> OperationResult:
         # Intentionally never passes -Force.
