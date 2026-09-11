@@ -39,6 +39,11 @@ def verified_kali_download(artifact, destination: Path, _progress, _cancelled: E
     return path
 
 
+def redirected_utf16(text: str) -> str:
+    """Match Windows' UTF-16LE console redirection after UTF-8 replacement decoding."""
+    return (b"\xff\xfe" + text.encode("utf-16-le")).decode("utf-8", errors="replace")
+
+
 def test_inspect_requires_wsl2_and_an_exact_case_insensitive_managed_distribution(tmp_path):
     from redpath_setup.wsl import WslSetup
 
@@ -75,6 +80,22 @@ def test_inspect_refuses_an_unmarked_distribution_without_running_an_action(tmp_
     assert len(runner.calls) == 3
 
 
+def test_inspect_normalizes_utf16_nul_redirected_wsl_output_before_matching_and_detecting_wsl1(tmp_path):
+    from redpath_setup.wsl import WslSetup
+
+    runner = RecordingRunner(
+        [
+            ProcessResult(0, redirected_utf16("Default Version: 2\r\n")),
+            ProcessResult(0, redirected_utf16("RedPath-Kali\r\n")),
+            ProcessResult(0),
+        ]
+    )
+    assert WslSetup(tmp_path, runner=runner).inspect().code == "KALI_READY"
+
+    runner = RecordingRunner([ProcessResult(0, redirected_utf16("Default Version: 1\r\n"))])
+    assert WslSetup(tmp_path, runner=runner).inspect().code == "WSL2_REQUIRED"
+
+
 def test_enable_requires_consent_and_reports_pending_restart(tmp_path):
     from redpath_setup.wsl import WslSetup
 
@@ -87,6 +108,39 @@ def test_enable_requires_consent_and_reports_pending_restart(tmp_path):
     stage = WslSetup(tmp_path, runner=runner).enable(True)
     assert (stage.status, stage.code) == ("needs_attention", "RESTART_REQUIRED")
     assert runner.calls[0][0] == ["wsl.exe", "--install", "--no-distribution"]
+
+
+@pytest.mark.parametrize("consent", [1, "true", object()])
+def test_enable_and_kali_install_require_the_boolean_true_consent_value(tmp_path, consent):
+    from redpath_setup.wsl import WslSetup
+
+    runner = RecordingRunner()
+    setup = WslSetup(tmp_path, runner=runner, downloader=verified_kali_download)
+    assert setup.enable(consent).code == "CONSENT_REQUIRED"
+    assert setup.install_kali(consent, lambda *_: None, Event()).code == "CONSENT_REQUIRED"
+    assert runner.calls == []
+
+
+def test_enable_treats_exit_3010_as_restart_required_before_generic_failure(tmp_path):
+    from redpath_setup.wsl import WslSetup
+
+    stage = WslSetup(tmp_path, runner=RecordingRunner([ProcessResult(3010)])).enable(True)
+    assert (stage.status, stage.code) == ("needs_attention", "RESTART_REQUIRED")
+
+
+def test_enable_does_not_mistake_no_restart_required_for_a_pending_restart(tmp_path):
+    from redpath_setup.wsl import WslSetup
+
+    runner = RecordingRunner(
+        [
+            ProcessResult(0, redirected_utf16("No restart required.\r\n")),
+            ProcessResult(0, "Default Version: 2\n"),
+            ProcessResult(0, ""),
+        ]
+    )
+    stage = WslSetup(tmp_path, runner=runner).enable(True)
+    assert stage.code == "KALI_NOT_INSTALLED"
+    assert len(runner.calls) == 3
 
 
 def test_kali_import_uses_the_pinned_artifact_managed_name_and_fixed_marker_command(tmp_path):
@@ -132,6 +186,20 @@ def test_install_refuses_existing_distribution_without_the_managed_marker_and_do
     assert not any("--import" in call[0] for call in runner.calls)
 
 
+def test_inspect_distinguishes_a_missing_marker_from_a_marker_check_failure(tmp_path):
+    from redpath_setup.wsl import WslSetup
+
+    runner = RecordingRunner(
+        [
+            ProcessResult(0, "Default Version: 2\n"),
+            ProcessResult(0, "RedPath-Kali\n"),
+            ProcessResult(2, "", "WSL transport failure"),
+        ]
+    )
+    stage = WslSetup(tmp_path, runner=runner).inspect()
+    assert (stage.status, stage.code) == ("failed", "KALI_MARKER_CHECK_FAILED")
+
+
 def test_run_in_kali_revalidates_managed_identity_before_fixed_exec_argv(tmp_path):
     from redpath_setup.wsl import WslSetup
 
@@ -144,13 +212,26 @@ def test_run_in_kali_revalidates_managed_identity_before_fixed_exec_argv(tmp_pat
     ]
 
 
-@pytest.mark.parametrize("arguments", ["printf ok", [], ["printf", 1], ["printf", "bad\x00value"]])
-def test_run_in_kali_rejects_untyped_or_malformed_argv_before_wsl(tmp_path, arguments):
+@pytest.mark.parametrize(
+    "arguments, timeout",
+    [
+        ("printf ok", 5),
+        ([], 5),
+        (["printf", 1], 5),
+        (["printf", "bad\x00value"], 5),
+        (["printf", "ok"], float("nan")),
+        (["printf", "ok"], float("inf")),
+        (["printf", "ok"], float("-inf")),
+        (["printf", "ok"], 0),
+        (["printf", "ok"], 61),
+    ],
+)
+def test_run_in_kali_rejects_untyped_malformed_or_unbounded_inputs_before_wsl(tmp_path, arguments, timeout):
     from redpath_setup.wsl import WslSetup, WslSetupError
 
     runner = RecordingRunner()
-    with pytest.raises(WslSetupError, match="arguments"):
-        WslSetup(tmp_path, runner=runner).run_in_kali(arguments, timeout=5)
+    with pytest.raises(WslSetupError):
+        WslSetup(tmp_path, runner=runner).run_in_kali(arguments, timeout=timeout)
     assert runner.calls == []
 
 

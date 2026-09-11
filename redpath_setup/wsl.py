@@ -6,6 +6,8 @@ which fixed Kali argv is allowed before it calls :meth:`WslSetup.run_in_kali`.
 
 from __future__ import annotations
 
+import math
+import re
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -15,7 +17,7 @@ from typing import Protocol
 from redpath_kali import ProcessResult
 
 from .downloads import DownloadCancelledError, DownloadError, download_verified
-from .manifest import KALI_ARTIFACT
+from .manifest import Artifact, KALI_ARTIFACT
 from .state import SetupStage
 
 DISTRIBUTION_NAME = "RedPath-Kali"
@@ -23,10 +25,15 @@ MANAGED_MARKER = "/etc/redpath-managed"
 STATUS_TIMEOUT_SECONDS = 30
 ENABLE_TIMEOUT_SECONDS = 120
 IMPORT_TIMEOUT_SECONDS = 1_800
+MAX_ACTION_TIMEOUT_SECONDS = 60
 
 
 class WslSetupError(RuntimeError):
     """WSL setup or trusted managed-distribution validation failed closed."""
+
+
+class WslMarkerCheckError(WslSetupError):
+    """The marker probe could not establish whether RedPath owns the distro."""
 
 
 class Runner(Protocol):
@@ -34,7 +41,7 @@ class Runner(Protocol):
 
 
 Progress = Callable[[int, int | None], None]
-Downloader = Callable[[object, Path, Progress, Event], Path]
+Downloader = Callable[[Artifact, Path, Progress, Event], Path]
 
 
 def _run(argv: Sequence[str], cwd: Path, timeout: float) -> ProcessResult:
@@ -54,15 +61,22 @@ def _run(argv: Sequence[str], cwd: Path, timeout: float) -> ProcessResult:
     return ProcessResult(completed.returncode, completed.stdout, completed.stderr)
 
 
+def _normalized_wsl_text(*values: str) -> str:
+    """Normalize UTF-16LE/NUL console redirection decoded as UTF-8 text."""
+    text = "\n".join(values).replace("\x00", "")
+    return text.lstrip("\ufeff\ufffd")
+
+
 def _restart_pending(result: ProcessResult) -> bool:
-    text = f"{result.stdout}\n{result.stderr}".casefold()
-    return "restart" in text or "reboot" in text
+    text = _normalized_wsl_text(result.stdout, result.stderr).casefold()
+    no_restart = r"(?:no|not)\s+(?:restart|reboot)\s+(?:is\s+)?required|(?:restart|reboot)\s+(?:is\s+)?not\s+required"
+    return re.search(no_restart, text) is None and re.search(r"\b(?:restart|reboot)\b", text) is not None
 
 
 def _wsl2_available(result: ProcessResult) -> bool:
     if result.returncode != 0:
         return False
-    text = f"{result.stdout}\n{result.stderr}".casefold()
+    text = _normalized_wsl_text(result.stdout, result.stderr).casefold()
     return "default version: 1" not in text and "default version 1" not in text
 
 
@@ -105,7 +119,8 @@ class WslSetup:
         result = self._invoke(("wsl.exe", "--list", "--quiet"), STATUS_TIMEOUT_SECONDS)
         if result.returncode != 0:
             raise WslSetupError("WSL distribution listing failed")
-        return tuple(line.strip() for line in result.stdout.splitlines() if line.strip())
+        text = _normalized_wsl_text(result.stdout)
+        return tuple(line.strip() for line in text.splitlines() if line.strip())
 
     def _managed_distribution_exists(self) -> bool:
         matches = [name for name in self._distribution_names() if name.casefold() == DISTRIBUTION_NAME.casefold()]
@@ -118,7 +133,11 @@ class WslSetup:
             ("wsl.exe", "--distribution", DISTRIBUTION_NAME, "--exec", "/usr/bin/test", "-f", MANAGED_MARKER),
             STATUS_TIMEOUT_SECONDS,
         )
-        return result.returncode == 0
+        if result.returncode == 0:
+            return True
+        if result.returncode == 1:
+            return False
+        raise WslMarkerCheckError("managed Kali marker check failed")
 
     @staticmethod
     def _consent_required() -> SetupStage:
@@ -141,18 +160,22 @@ class WslSetup:
                 return SetupStage("wsl", "needs_attention", "KALI_NOT_INSTALLED", "The managed Kali distribution is not installed.")
             if not self._has_managed_marker():
                 return SetupStage("wsl", "failed", "KALI_IDENTITY_MISMATCH", "The existing Kali distribution is not managed by RedPath.")
+        except WslMarkerCheckError:
+            return SetupStage("wsl", "failed", "KALI_MARKER_CHECK_FAILED", "The managed Kali ownership marker could not be checked.")
         except (OSError, subprocess.TimeoutExpired, WslSetupError):
             return SetupStage("wsl", "needs_attention", "WSL_UNAVAILABLE", "WSL2 is unavailable.")
         return SetupStage("wsl", "ready", "KALI_READY", "The managed Kali distribution is ready.")
 
     def enable(self, consent: bool) -> SetupStage:
         """Request WSL2 setup only after an explicit user consent receipt."""
-        if not consent:
+        if consent is not True:
             return self._consent_required()
         try:
             result = self._invoke(("wsl.exe", "--install", "--no-distribution"), ENABLE_TIMEOUT_SECONDS)
         except (OSError, subprocess.TimeoutExpired, WslSetupError):
             return SetupStage("wsl", "failed", "WSL_ENABLE_FAILED", "Windows could not start WSL2 setup.")
+        if result.returncode == 3010:
+            return SetupStage("wsl", "needs_attention", "RESTART_REQUIRED", "Restart Windows, then return to RedPath setup.")
         if result.returncode != 0:
             return SetupStage("wsl", "failed", "WSL_ENABLE_FAILED", "Windows could not enable WSL2.")
         if _restart_pending(result):
@@ -161,7 +184,7 @@ class WslSetup:
 
     def install_kali(self, consent: bool, progress: Progress, cancelled: Event) -> SetupStage:
         """Import the verified Kali artifact and write RedPath's fixed marker."""
-        if not consent:
+        if consent is not True:
             return self._consent_required()
         if cancelled.is_set():
             return self._cancelled()
@@ -211,8 +234,8 @@ class WslSetup:
     def run_in_kali(self, arguments: Sequence[str], timeout: float) -> ProcessResult:
         """Execute a prevalidated fixed action in the owned Kali distribution."""
         argv = _valid_arguments(arguments)
-        if type(timeout) not in (int, float) or timeout <= 0:
-            raise WslSetupError("Kali timeout must be a positive number")
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= MAX_ACTION_TIMEOUT_SECONDS:
+            raise WslSetupError("Kali timeout must be a finite number from 0 through 60 seconds")
         stage = self.inspect()
         if stage.code != "KALI_READY":
             raise WslSetupError("managed Kali distribution is not ready")
