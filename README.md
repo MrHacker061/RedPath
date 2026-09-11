@@ -10,6 +10,7 @@ direct command execution.
 ```text
 docs/       RedPath context, architecture, connections, and implementation tasks
 scanner/    Authorized private-lab Python scanner
+redpath_ai/ Strict recommendation providers, prompts, and AI schemas
 tests/      Python scanner tests and PowerShell VM tests
 vm/         Headless Kali manager, Vagrant configuration, and provisioning
 .local/     Generated machine-specific files; ignored by Git
@@ -26,6 +27,21 @@ Important project documents:
 - [System layout](./docs/REDPATH_SYSTEM_MAP.md)
 - [Component connections](./docs/REDPATH_PROJECT_CONNECTIONS.md)
 - [Four-worker implementation tasks](./docs/REDPATH_IMPLEMENTATION_TASKS.md)
+- [Local Ollama setup](./docs/OLLAMA_SETUP.md)
+
+## AI recommendation foundation
+
+Install the Python dependency and run the tests:
+
+```powershell
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+`redpath_ai` contains the provider interface, a loopback-only Ollama client, and
+a deterministic fallback. It produces validated recommendations and beginner
+explanations only. It has no command runner, SSH client, scanner integration, or
+execution authority. The backend remains responsible for policy and approval.
 
 ## Headless Kali terminal
 
