@@ -1,4 +1,5 @@
 import { RedPathApi, normalizeFinding, normalizeHealth } from "./api.js";
+import { normalizeRecommendation, ProposalWorkflow, renderProposalState, renderRecommendation } from "./recommendation.js";
 
 const api = new RedPathApi();
 const refreshButton = document.querySelector("#refresh-health");
@@ -11,7 +12,53 @@ const evidenceMessage = document.querySelector("#evidence-message");
 const findingsBody = document.querySelector("#findings-body");
 const reportMessage = document.querySelector("#report-message");
 const explanations = document.querySelector("#explanations");
+const recommendationButton = document.querySelector("#request-recommendation");
+const recommendationMessage = document.querySelector("#recommendation-message");
+const recommendationElements = {
+  content: document.querySelector("#recommendation-content"),
+  heading: document.querySelector("#ai-recommendation-title"),
+  findingIds: document.querySelector("#recommendation-finding-ids"),
+  reason: document.querySelector("#recommendation-reason"),
+  learningGoal: document.querySelector("#recommendation-learning-goal"),
+  action: document.querySelector("#recommendation-action"),
+  arguments: document.querySelector("#recommendation-arguments"),
+  policyResult: document.querySelector("#policy-result"),
+  policyCode: document.querySelector("#policy-code"),
+  policyExplanation: document.querySelector("#policy-explanation"),
+};
+const proposalElements = {
+  controls: document.querySelector("#proposal-controls"),
+  approve: document.querySelector("#approve-proposal"),
+  reject: document.querySelector("#reject-proposal"),
+  message: document.querySelector("#proposal-state"),
+};
 let activeSessionId = null;
+let recommendationReady = false;
+let recommendationPending = false;
+let approvalTimer = null;
+
+const proposalWorkflow = new ProposalWorkflow({
+  api,
+  onChange: (state) => {
+    renderProposalState(proposalElements, state);
+    clearTimeout(approvalTimer);
+    if (state.status === "approved") {
+      const delay = Math.max(0, Date.parse(state.receipt.expiresAt) - Date.now());
+      approvalTimer = setTimeout(() => proposalWorkflow.refreshExpiration(), Math.min(delay + 25, 2_147_483_647));
+    }
+  },
+});
+
+function resetRecommendation(text) {
+  clearTimeout(approvalTimer);
+  recommendationElements.content.hidden = true;
+  recommendationButton.disabled = true;
+  recommendationMessage.dataset.state = "";
+  recommendationMessage.textContent = text;
+  proposalElements.controls.hidden = true;
+  proposalElements.approve.disabled = true;
+  proposalElements.reject.disabled = true;
+}
 
 function setLoading(isLoading) {
   refreshButton.disabled = isLoading;
@@ -73,6 +120,8 @@ sessionForm.addEventListener("submit", async (event) => {
     await api.addLessonSource(session.id, { url: data.get("lesson_url"), title: data.get("objective") });
     await api.addTarget(session.id, { address: data.get("target"), authorization_source: "user_confirmation", expires_at: expiresAt });
     activeSessionId = session.id;
+    recommendationReady = false;
+    resetRecommendation("Import evidence before requesting a recommendation.");
     scanFile.disabled = false;
     scanForm.querySelector("button[type=submit]").disabled = false;
     sessionMessage.textContent = "Session created. You can now import evidence for the authorized target.";
@@ -87,6 +136,8 @@ scanForm.addEventListener("submit", async (event) => {
   if (!activeSessionId || !scanFile.files?.[0]) return;
   const submit = scanForm.querySelector("button[type=submit]");
   submit.disabled = true;
+  recommendationReady = false;
+  resetRecommendation("Importing new evidence before another recommendation can be requested.");
   evidenceMessage.textContent = "Importing and validating the scan…";
   try {
     const file = scanFile.files[0];
@@ -106,6 +157,11 @@ scanForm.addEventListener("submit", async (event) => {
       findingsBody.append(row);
     }
     evidenceMessage.textContent = `${findings.length} observed finding${findings.length === 1 ? "" : "s"} imported.`;
+    recommendationReady = findings.length > 0;
+    recommendationButton.disabled = !recommendationReady;
+    recommendationMessage.textContent = recommendationReady
+      ? "Evidence is ready. Request one policy-checked learning recommendation."
+      : "A recommendation needs at least one imported finding.";
     const learning = await api.getExplanation(activeSessionId);
     explanations.replaceChildren();
     for (const explanation of learning.explanations || []) {
@@ -125,5 +181,36 @@ scanForm.addEventListener("submit", async (event) => {
   } catch (error) { evidenceMessage.textContent = error.message; }
   finally { submit.disabled = false; }
 });
+
+recommendationButton.addEventListener("click", async () => {
+  if (!activeSessionId || !recommendationReady || recommendationPending) return;
+  recommendationPending = true;
+  recommendationButton.disabled = true;
+  recommendationButton.setAttribute("aria-busy", "true");
+  recommendationButton.textContent = "Requesting…";
+  recommendationMessage.dataset.state = "pending";
+  recommendationMessage.textContent = "Requesting an AI recommendation and an independent policy decision…";
+  recommendationElements.content.hidden = true;
+  try {
+    const recommendation = normalizeRecommendation(await api.requestRecommendation(activeSessionId), activeSessionId);
+    renderRecommendation(recommendationElements, recommendation);
+    proposalWorkflow.load(recommendation);
+    recommendationMessage.dataset.state = recommendation.policyDecision.allowed ? "approved" : "rejected";
+    recommendationMessage.textContent = recommendation.policyDecision.allowed
+      ? "Recommendation received. Review the exact proposal before deciding."
+      : "Recommendation received, but policy rejected the proposal.";
+  } catch {
+    recommendationMessage.dataset.state = "error";
+    recommendationMessage.textContent = "RedPath could not load a valid recommendation. Review the evidence and try again.";
+  } finally {
+    recommendationPending = false;
+    recommendationButton.disabled = !recommendationReady;
+    recommendationButton.setAttribute("aria-busy", "false");
+    recommendationButton.textContent = "Request recommendation";
+  }
+});
+
+proposalElements.approve.addEventListener("click", () => proposalWorkflow.decide("approve"));
+proposalElements.reject.addEventListener("click", () => proposalWorkflow.decide("reject"));
 
 refreshHealth();

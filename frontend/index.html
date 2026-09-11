@@ -21,6 +21,7 @@
     <a href="#dashboard" aria-current="page">Dashboard</a>
     <a href="#session">Lab session</a>
     <a href="#evidence">Evidence</a>
+    <a href="#recommendation">Recommendation</a>
     <a href="#report">Report</a>
   </nav>
 
@@ -86,6 +87,53 @@
         <table><thead><tr><th>State</th><th>Port</th><th>Service</th><th>Evidence source</th></tr></thead>
           <tbody id="findings-body"><tr><td colspan="4">No findings imported.</td></tr></tbody></table>
       </div>
+    </section>
+
+    <section id="recommendation" aria-labelledby="recommendation-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">NEXT LEARNING STEP</p>
+          <h2 id="recommendation-title">Review a recommendation</h2>
+        </div>
+        <button id="request-recommendation" type="button" disabled>Request recommendation</button>
+      </div>
+      <p>RedPath shows what the AI suggested separately from the backend policy decision. Approval applies only to the exact proposal shown.</p>
+      <div id="recommendation-message" class="notice" role="status" aria-live="polite">Import evidence before requesting a recommendation.</div>
+
+      <div id="recommendation-content" class="recommendation-grid" hidden>
+        <article id="ai-recommendation" class="recommendation-card" aria-labelledby="ai-recommendation-title">
+          <p class="eyebrow">AI RECOMMENDATION</p>
+          <h3 id="ai-recommendation-title" tabindex="-1">Suggested learning step</h3>
+          <dl class="proposal-details">
+            <div><dt>Supporting finding IDs</dt><dd><ul id="recommendation-finding-ids"></ul></dd></div>
+            <div><dt>Reason</dt><dd id="recommendation-reason"></dd></div>
+            <div><dt>Learning goal</dt><dd id="recommendation-learning-goal"></dd></div>
+            <div><dt>Registered action</dt><dd><code id="recommendation-action"></code></dd></div>
+            <div><dt>Exact arguments</dt><dd><dl id="recommendation-arguments" class="argument-list"></dl></dd></div>
+          </dl>
+        </article>
+
+        <article id="policy-decision" class="policy-card" aria-labelledby="policy-decision-title">
+          <p class="eyebrow">BACKEND POLICY DECISION</p>
+          <h3 id="policy-decision-title">Independent policy check</h3>
+          <dl class="proposal-details">
+            <div><dt>Decision</dt><dd id="policy-result"></dd></div>
+            <div><dt>Code</dt><dd><code id="policy-code"></code></dd></div>
+            <div><dt>Explanation</dt><dd id="policy-explanation"></dd></div>
+          </dl>
+          <div id="proposal-controls" class="proposal-controls" role="group" aria-label="Exact proposal decision">
+            <button id="approve-proposal" type="button">Approve exact proposal</button>
+            <button id="reject-proposal" class="secondary-button" type="button">Reject proposal</button>
+          </div>
+          <p id="proposal-state" class="notice" role="status" aria-live="polite">Waiting for a policy decision.</p>
+          <p class="detail">Approval does not run anything. No execution endpoint is connected to this frontend.</p>
+        </article>
+      </div>
+
+      <aside class="emergency-control" aria-labelledby="emergency-stop-title">
+        <div><h3 id="emergency-stop-title">Emergency stop</h3><p id="emergency-stop-detail" class="detail">No emergency-stop backend endpoint is available yet.</p></div>
+        <button id="emergency-stop" type="button" disabled aria-describedby="emergency-stop-detail">Emergency stop unavailable</button>
+      </aside>
     </section>
 
     <section id="report" class="placeholder" aria-labelledby="report-title">

@@ -15,6 +15,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { scroll-behavior: smooth; }
 body { margin: 0; background: radial-gradient(circle at top right, #15352c 0, var(--background) 36rem); color: var(--text); line-height: 1.55; }
 a { color: var(--accent); }
@@ -52,6 +53,9 @@ section { scroll-margin-top: 1rem; }
 .notice { border-left: 4px solid var(--warning); margin-bottom: 1rem; padding: .65rem 1rem; }
 .notice[data-state="healthy"] { border-color: var(--accent); }
 .notice[data-state="error"] { border-color: var(--error); color: var(--error); }
+.notice[data-state="approved"] { border-color: var(--accent); }
+.notice[data-state="pending"] { border-color: var(--warning); }
+.notice[data-state="rejected"], .notice[data-state="expired"] { border-color: var(--error); color: var(--error); }
 .placeholder { margin-top: 1rem; }
 footer { border-top: 1px solid var(--border); color: var(--muted); padding-block: 1.5rem; }
 form { display: grid; gap: 1rem; max-width: 44rem; }
@@ -62,11 +66,28 @@ input, select { border: 1px solid #8da0ad; border-radius: .4rem; padding: .65rem
 .table-wrap { overflow-x: auto; margin-top: 1rem; }
 table { border-collapse: collapse; width: 100%; }
 th, td { border-bottom: 1px solid var(--border); padding: .7rem; text-align: left; }
+.recommendation-grid { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.recommendation-card, .policy-card, .emergency-control { background: var(--surface); border: 1px solid var(--border); border-radius: 1rem; padding: 1.25rem; }
+.recommendation-card { border-top: 4px solid var(--accent); }
+.policy-card { border-top: 4px solid var(--warning); }
+.proposal-details { display: grid; gap: 1rem; margin-bottom: 1rem; }
+.proposal-details > div { border-top: 1px solid var(--border); padding-top: .75rem; }
+dt { color: var(--muted); font-size: .8rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
+.argument-list { display: grid; gap: .25rem 1rem; grid-template-columns: max-content minmax(0, 1fr); }
+.argument-list dt { text-transform: none; }
+.proposal-controls { display: flex; flex-wrap: wrap; gap: .75rem; margin-bottom: 1rem; }
+.secondary-button { background: transparent; color: var(--text); }
+.secondary-button:hover { background: var(--surface-raised); }
+.emergency-control { align-items: center; display: flex; gap: 1rem; justify-content: space-between; margin-top: 1rem; }
+.emergency-control h3, .emergency-control p { margin-bottom: 0; }
 
 @media (max-width: 46rem) {
   .site-header { align-items: start; flex-direction: column; gap: 1.25rem; }
   .health-grid { grid-template-columns: 1fr; }
   .section-heading { align-items: start; flex-direction: column; margin-bottom: 1rem; }
+  .recommendation-grid { grid-template-columns: 1fr; }
+  .emergency-control { align-items: stretch; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {

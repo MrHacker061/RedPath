@@ -41,6 +41,18 @@ export class RedPathApi {
     return this.request(`/sessions/${encodeURIComponent(sessionId)}/explanation`);
   }
 
+  async requestRecommendation(sessionId) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/recommendation`, { method: "POST" });
+  }
+
+  async approveProposal(sessionId, proposalId) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/proposals/${encodeURIComponent(proposalId)}/approve`, { method: "POST" });
+  }
+
+  async rejectProposal(sessionId, proposalId) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/proposals/${encodeURIComponent(proposalId)}/reject`, { method: "POST" });
+  }
+
   async request(path, options = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);

@@ -106,6 +106,32 @@ test("explanation request remains scoped to the session", async () => {
   assert.equal(response.execution_authorized, false);
 });
 
+test("recommendation request posts to the encoded session endpoint", async () => {
+  let request;
+  const api = new RedPathApi({ fetchImpl: async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ proposal: {}, policy_decision: {} });
+  } });
+  await api.requestRecommendation("session /1");
+  assert.equal(request.url, "/api/v1/sessions/session%20%2F1/recommendation");
+  assert.equal(request.options.method, "POST");
+  assert.equal(request.options.body, undefined);
+});
+
+test("proposal decisions post the exact encoded proposal path", async () => {
+  const requests = [];
+  const api = new RedPathApi({ fetchImpl: async (url, options) => {
+    requests.push({ url, method: options.method });
+    return jsonResponse({ proposal_id: "proposal /1", status: "approved", approval_id: "approval-1", expires_at: "2030-01-01T00:00:00Z" });
+  } });
+  await api.approveProposal("session /1", "proposal /1");
+  await api.rejectProposal("session /1", "proposal /1");
+  assert.deepEqual(requests, [
+    { url: "/api/v1/sessions/session%20%2F1/proposals/proposal%20%2F1/approve", method: "POST" },
+    { url: "/api/v1/sessions/session%20%2F1/proposals/proposal%20%2F1/reject", method: "POST" },
+  ]);
+});
+
 test("finding normalization keeps bounded evidence fields", () => {
   assert.deepEqual(normalizeFinding({ id: "finding-1", state: "observed", protocol: "tcp", port: 80, service_hint: "http", evidence_source: "scan-1" }), {
     id: "finding-1", state: "observed", protocol: "tcp", port: 80, service: "http", source: "scan-1",

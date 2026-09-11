@@ -36,3 +36,25 @@ test("evidence workspace accepts XML and labels evidence states", () => {
   assert.match(html, /Observed scan facts, AI inferences, and verified results/);
   assert.match(html, /id="findings-body"/);
 });
+
+test("recommendation and policy decision use separate labeled regions", () => {
+  assert.match(html, /id="ai-recommendation"[^>]*aria-labelledby="ai-recommendation-title"/);
+  assert.match(html, /id="policy-decision"[^>]*aria-labelledby="policy-decision-title"/);
+  assert.match(html, /id="recommendation-finding-ids"/);
+  assert.match(html, /id="recommendation-arguments"/);
+});
+
+test("exact proposal controls are native buttons with an announced state", () => {
+  assert.match(html, /id="approve-proposal"[^>]*type="button"/);
+  assert.match(html, /id="reject-proposal"[^>]*type="button"/);
+  assert.match(html, /id="proposal-state"[^>]*role="status"[^>]*aria-live="polite"/);
+});
+
+test("emergency stop is visibly unavailable until a backend endpoint exists", () => {
+  assert.match(html, /id="emergency-stop"[^>]*type="button"[^>]*disabled/);
+  assert.match(html, /No emergency-stop backend endpoint is available yet/);
+});
+
+test("frontend exposes no execution control", () => {
+  assert.doesNotMatch(html, /id="(?:run|execute)-(?:action|proposal)"/);
+});
