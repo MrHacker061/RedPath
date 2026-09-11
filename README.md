@@ -45,6 +45,19 @@ The files in `docs`, `scanner`, `tests`, and `vm`, along with this README,
 `__pycache__`, `.vagrant`, virtual disks, ISO files, logs, environment files,
 API keys, SSH private keys, or other generated machine state.
 
+## Windows desktop MVP
+
+The Windows 11 x64 MVP packages RedPath as a per-user desktop application and
+starts its guided setup after installation. The installer is built from
+`packaging/RedPath.iss`; its expected output is
+`dist/installer/RedPath-Setup-0.1.0-x64.exe`. It does not bundle the local
+model or managed Kali environment. Those downloads require explicit in-app
+consent and are checksum-verified before use.
+
+For system requirements, installation, repair, authorized-use limits, and
+uninstall preservation details, see [Install RedPath on Windows](docs/INSTALL_WINDOWS.md).
+Before distribution, complete [the MVP release checklist](docs/MVP_RELEASE_CHECKLIST.md).
+
 Important project documents:
 
 - [Full project context](./docs/REDPATH_CONTEXT.md)
