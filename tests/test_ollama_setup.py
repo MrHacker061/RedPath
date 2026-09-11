@@ -1,7 +1,7 @@
-from io import StringIO
+from io import BufferedReader, FileIO, StringIO, TextIOWrapper
+import os
 from pathlib import Path
-from threading import Event
-import time
+from threading import Event, Thread
 
 import pytest
 
@@ -80,18 +80,6 @@ class StreamedProcess:
     def poll(self):
         self.polls += 1
         return None if self.polls < 3 else self.returncode
-
-
-class InheritedPipe:
-    def __init__(self) -> None:
-        self.closed = Event()
-
-    def readline(self, _size):
-        self.closed.wait()
-        raise ValueError("closed")
-
-    def close(self):
-        self.closed.set()
 
 
 class ExitedProcess:
@@ -204,15 +192,91 @@ def test_runner_emits_valid_intermediate_stderr_progress_without_raw_output(tmp_
     assert progress == [(0, None), (12, 100), (57, 100), (100, 100)]
 
 
-def test_runner_closes_inherited_progress_pipe_without_unbounded_join(tmp_path, monkeypatch):
+@pytest.mark.parametrize("timeout", [0, 600])
+def test_runner_kills_unresponsive_child_with_cleanup_waits_inside_deadline(tmp_path, monkeypatch, timeout):
     from redpath_setup import ollama
 
-    pipe = InheritedPipe()
-    monkeypatch.setattr(ollama.subprocess, "Popen", lambda *_args, **_kwargs: ExitedProcess(pipe))
-    started = time.monotonic()
-    ollama._run(["ollama", "pull", "qwen2.5:7b-instruct-q4_K_M"], tmp_path, 600, Event(), lambda *_: None)
-    assert pipe.closed.is_set()
-    assert time.monotonic() - started < 1
+    cancelled = Event()
+    waits = []
+
+    class UnresponsiveProcess(CancelledProcess):
+        def wait(self, timeout=None):
+            waits.append(timeout)
+            raise ollama.subprocess.TimeoutExpired("fixed-command", timeout)
+
+    child = UnresponsiveProcess(cancelled)
+    monkeypatch.setattr(ollama.subprocess, "Popen", lambda *_args, **_kwargs: child)
+    expected = ollama.subprocess.TimeoutExpired if timeout == 0 else ollama.ProcessCancelled
+    with pytest.raises(expected):
+        ollama._run(["ollama", "pull", "qwen2.5:7b-instruct-q4_K_M"], tmp_path, timeout, cancelled, lambda *_: None)
+    assert child.returncode == -9
+    assert len(waits) == 2
+    assert all(0 <= wait <= 0.1 for wait in waits)
+    if timeout == 0:
+        assert waits == [0, 0]
+
+
+@pytest.mark.parametrize("state", ["exited", "cancelled", "timeout"])
+def test_runner_returns_with_real_progress_pipe_held_open(tmp_path, monkeypatch, state):
+    from redpath_setup import ollama
+
+    reading = Event()
+    read_fd, write_fd = os.pipe()
+
+    class ObservedPipe(FileIO):
+        def readinto(self, buffer):
+            # BufferedReader holds its lock before calling the raw read.
+            reading.set()
+            return super().readinto(buffer)
+
+    pipe = TextIOWrapper(BufferedReader(ObservedPipe(read_fd, "rb")))
+    cancelled = Event()
+
+    class PipeProcess(ExitedProcess):
+        def __init__(self):
+            super().__init__(pipe)
+            self.returncode = 0 if state == "exited" else None
+
+        def poll(self):
+            assert reading.wait(1)
+            if state == "cancelled":
+                cancelled.set()
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    child = PipeProcess()
+    monkeypatch.setattr(ollama.subprocess, "Popen", lambda *_args, **_kwargs: child)
+    outcomes = []
+
+    def run():
+        try:
+            outcomes.append(ollama._run(
+                ["ollama", "pull", "qwen2.5:7b-instruct-q4_K_M"], tmp_path,
+                0.05 if state == "timeout" else 600, cancelled, lambda *_: None,
+            ))
+        except Exception as error:
+            outcomes.append(error)
+
+    worker = Thread(target=run, daemon=True)
+    worker.start()
+    try:
+        worker.join(timeout=1)
+        assert not worker.is_alive(), "runner blocked closing a pipe still being read"
+        if state == "exited":
+            assert outcomes[0].returncode == 0
+        else:
+            expected = ollama.ProcessCancelled if state == "cancelled" else ollama.subprocess.TimeoutExpired
+            assert isinstance(outcomes[0], expected)
+            assert child.returncode == -15
+    finally:
+        # Release the inherited writer even on RED so pytest itself cannot hang.
+        os.close(write_fd)
+        worker.join(timeout=2)
 
 
 def test_model_pull_requires_consent_before_running_command(tmp_path):

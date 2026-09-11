@@ -36,30 +36,39 @@ class ProcessCancelled(RuntimeError):
     """A setup operation was cancelled while its child process was active."""
 
 
-def _stop(process: subprocess.Popen[str]) -> None:
+def _stop(process: subprocess.Popen[str], deadline: float) -> None:
     process.terminate()
     try:
-        process.wait(timeout=5)
+        process.wait(timeout=max(0, min(0.1, deadline - time.monotonic())))
     except subprocess.TimeoutExpired:
         process.kill()
-        process.wait(timeout=5)
+        try:
+            process.wait(timeout=max(0, min(0.1, deadline - time.monotonic())))
+        except subprocess.TimeoutExpired:
+            # Termination is requested; reaping must not extend the deadline.
+            pass
 
 
 def _read_progress_lines(stderr, updates: Queue[int], stopped: Event) -> None:
-    while not stopped.is_set():
-        try:
-            line = stderr.readline(MAX_PROGRESS_LINE_CHARS)
-        except (OSError, ValueError):
-            return
-        if not line:
-            return
-        for update in _progress_fields(line):
-            while not stopped.is_set():
-                try:
-                    updates.put(update, timeout=0.1)
-                    break
-                except Full:
-                    pass
+    try:
+        while not stopped.is_set():
+            try:
+                line = stderr.readline(MAX_PROGRESS_LINE_CHARS)
+            except (OSError, ValueError):
+                return
+            if not line:
+                return
+            for update in _progress_fields(line):
+                while not stopped.is_set():
+                    try:
+                        updates.put(update, timeout=0.1)
+                        break
+                    except Full:
+                        pass
+    finally:
+        # Only the reader closes its stream: concurrent close can block on
+        # BufferedReader's lock while a descendant still holds the write end.
+        stderr.close()
 
 
 def _progress_fields(line: str) -> tuple[int, ...]:
@@ -70,6 +79,7 @@ def _run(
     argv: Sequence[str], cwd: Path, timeout: float, cancelled: Event, progress: Progress
 ) -> subprocess.CompletedProcess[str]:
     """Run a fixed command with bounded numeric progress and responsive cancellation."""
+    deadline = time.monotonic() + timeout
     progress(0, None)
     process = subprocess.Popen(
         list(argv),
@@ -96,19 +106,19 @@ def _run(
 
     def close_reader(join_timeout: float) -> None:
         stopped.set()
-        process.stderr.close()
+        # An inherited writer may outlive the child. Leave the daemon reader
+        # to close its own pipe at EOF instead of blocking this operation.
         reader.join(timeout=max(0, join_timeout))
 
-    deadline = time.monotonic() + timeout
     while process.poll() is None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
+            _stop(process, deadline)
             close_reader(0)
-            _stop(process)
             raise subprocess.TimeoutExpired(list(argv), timeout)
         if cancelled.is_set():
-            close_reader(min(0.1, remaining))
-            _stop(process)
+            _stop(process, deadline)
+            close_reader(min(0.1, deadline - time.monotonic()))
             raise ProcessCancelled()
         try:
             report(updates.get(timeout=min(0.1, remaining)))
