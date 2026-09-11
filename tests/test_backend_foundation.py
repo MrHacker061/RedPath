@@ -37,6 +37,15 @@ def test_health_endpoint_and_schema_creation(app):
     assert {"lab_sessions", "authorized_targets", "proposals", "policy_decisions"} <= set(inspect(app.state.engine).get_table_names())
 
 
+def test_fastapi_serves_desktop_shell(app):
+    with TestClient(app) as client:
+        response = client.get("/")
+
+        assert response.status_code == 200
+        assert '<main id="main-content"' in response.text
+        assert client.get("/api/v1/health").status_code == 200
+
+
 def test_config_rejects_network_exposure_and_non_sqlite_database():
     with pytest.raises(ValidationError, match="loopback"):
         Settings(host="0.0.0.0")
