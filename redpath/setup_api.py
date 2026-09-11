@@ -44,12 +44,26 @@ class SetupOperationController:
             self._active = (component, event)
         return event
 
-    def finish(self, component: ComponentName, event: Event) -> None:
+    def complete(self, component: ComponentName, event: Event) -> bool:
+        """Atomically finish an operation and report whether its cancel won.
+
+        Cancellation and completion share ``_state_lock`` so a successful
+        cancel request is always reflected in the repair response for that
+        exact event.  Clearing the active event before releasing the operation
+        lock also prevents a later cancel request from being attributed to the
+        completed repair.
+        """
         with self._state_lock:
             if self._active != (component, event):
-                return
+                return event.is_set()
+            cancelled = event.is_set()
             self._active = None
             self._operation_lock.release()
+            return cancelled
+
+    def finish(self, component: ComponentName, event: Event) -> None:
+        """Compatibility helper for callers that do not need cancel outcome."""
+        self.complete(component, event)
 
     def cancel(self, component: ComponentName) -> bool:
         with self._state_lock:
@@ -61,6 +75,10 @@ class SetupOperationController:
 
 def _failed(component: str, code: str = "SETUP_OPERATION_FAILED") -> SetupStage:
     return SetupStage(component, "failed", code, "The setup operation could not be completed.")
+
+
+def _cancelled(component: ComponentName) -> SetupStage:
+    return SetupStage(component, "needs_attention", "CANCELLED", "The setup operation was cancelled.")
 
 
 def _as_status(component: str, stage: object) -> SetupComponentStatus:
@@ -120,16 +138,20 @@ def _repair(request: Request, component: ComponentName, consent: bool) -> SetupS
         raise HTTPException(status_code=409, detail="Another setup operation is in progress")
     try:
         if component == "ollama":
-            return request.app.state.ollama_setup.install(consent, _progress, cancelled)
-        if component == "model":
-            return request.app.state.ollama_setup.pull_model(consent, _progress, cancelled)
-        if component == "wsl":
-            return request.app.state.wsl_setup.enable(consent, cancelled)
-        return request.app.state.wsl_setup.install_kali(consent, _progress, cancelled)
+            stage = request.app.state.ollama_setup.install(consent, _progress, cancelled)
+        elif component == "model":
+            stage = request.app.state.ollama_setup.pull_model(consent, _progress, cancelled)
+        elif component == "wsl":
+            stage = request.app.state.wsl_setup.enable(consent, cancelled)
+        else:
+            stage = request.app.state.wsl_setup.install_kali(consent, _progress, cancelled)
     except Exception:
-        return _failed(component)
+        stage = _failed(component)
     finally:
-        operations.finish(component, cancelled)
+        cancellation_won = operations.complete(component, cancelled)
+    if cancellation_won and stage.status == "ready":
+        return _cancelled(component)
+    return stage
 
 
 @router.get("/setup", response_model=SetupResponse)

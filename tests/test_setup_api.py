@@ -133,6 +133,29 @@ def test_setup_operation_controller_binds_cancellation_to_only_the_active_event(
     controller.finish("ollama", second)
 
 
+def test_setup_operation_completion_reports_when_cancel_wins_the_same_generation():
+    from redpath.setup_api import SetupOperationController
+
+    controller = SetupOperationController()
+    event = controller.begin("ollama")
+    assert event is not None
+    assert controller.cancel("ollama") is True
+
+    assert controller.complete("ollama", event) is True
+    assert controller.cancel("ollama") is False
+
+
+def test_setup_operation_completion_wins_before_a_later_cancel_request():
+    from redpath.setup_api import SetupOperationController
+
+    controller = SetupOperationController()
+    event = controller.begin("ollama")
+    assert event is not None
+
+    assert controller.complete("ollama", event) is False
+    assert controller.cancel("ollama") is False
+
+
 def test_cancel_route_sets_only_the_current_active_event(client, app):
     active = app.state.setup_operations.begin("model")
     assert active is not None
@@ -144,6 +167,19 @@ def test_cancel_route_sets_only_the_current_active_event(client, app):
     assert response.status_code == 200
     assert response.json()["code"] == "CANCEL_REQUESTED"
     assert active.is_set()
+
+
+def test_repair_returns_cancelled_when_active_cancel_wins_just_before_ready(client, app):
+    def install(_consent, _progress, _event):
+        assert app.state.setup_operations.cancel("ollama") is True
+        return SetupStage("ollama", "ready", "OLLAMA_READY", "Local Ollama is ready.")
+
+    app.state.ollama_setup.install = install
+    response = client.post("/api/v1/setup/ollama/repair", json={"consent": True})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "needs_attention"
+    assert response.json()["code"] == "CANCELLED"
 
 
 def test_diagnostics_exclude_raw_component_output(client, app):
