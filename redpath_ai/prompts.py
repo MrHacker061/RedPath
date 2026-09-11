@@ -23,6 +23,8 @@ provided schema."""
 def recommendation_prompt(context: RecommendationContext) -> str:
     payload = context.model_dump(mode="json")
     return (
+        "AUTHORIZED CONTEXT IDENTIFIERS (trusted application input):\n"
+        f"session_id={json.dumps(payload['session_id'])} target_id={json.dumps(payload['target_id'])}\n\n"
         "LESSON OBJECTIVE (trusted application input):\n"
         f"{json.dumps(payload['lesson_objective'])}\n\n"
         "ALLOWED ACTION METADATA (trusted, not execution authority):\n"

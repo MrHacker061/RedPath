@@ -7,9 +7,12 @@ from redpath_ai.prompts import SYSTEM_PROMPT, recommendation_prompt
 from redpath_ai.providers import OllamaProvider, RuleBasedProvider
 from redpath_ai.schemas import (
     ActionDefinition,
+    ActionArgumentConstraint,
+    ArgumentKind,
     EvidenceState,
     Finding,
     ProposalKind,
+    ProviderCode,
     ProposedStep,
     RecommendationContext,
 )
@@ -17,10 +20,14 @@ from redpath_ai.schemas import (
 
 def context(summary: str = "Port 80 is open") -> RecommendationContext:
     return RecommendationContext(
+        session_id="session-1",
+        target_id="target-3",
         lesson_objective="Learn how HTTP metadata supports service identification.",
         findings=(
             Finding(
                 id="finding-12",
+                session_id="session-1",
+                target_id="target-3",
                 state=EvidenceState.OBSERVED,
                 category="open_port",
                 protocol="tcp",
@@ -34,7 +41,10 @@ def context(summary: str = "Port 80 is open") -> RecommendationContext:
             ActionDefinition(
                 name="inspect_http_headers",
                 description="Read response headers with a fixed adapter.",
-                argument_names=("port",),
+                argument_constraints=(
+                    ActionArgumentConstraint(name="target_id", kind=ArgumentKind.TARGET_ID),
+                    ActionArgumentConstraint(name="port", kind=ArgumentKind.PORT),
+                ),
             ),
         ),
     )
@@ -45,7 +55,7 @@ def action_json(**changes):
         "kind": "action",
         "finding_ids": ["finding-12"],
         "action_name": "inspect_http_headers",
-        "arguments": {"port": 80},
+        "arguments": {"target_id": "target-3", "port": 80},
         "reason": "HTTP was observed.",
         "learning_goal": "Understand response headers.",
         "requires_approval": True,
@@ -74,6 +84,43 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported finding"):
             proposal.validate_against(context())
 
+    def test_context_rejects_cross_session_or_cross_target_findings(self):
+        data = context().model_dump()
+        data["findings"][0]["target_id"] = "target-other"
+        with self.assertRaisesRegex(ValidationError, "context session_id and target_id"):
+            RecommendationContext.model_validate(data)
+
+    def test_target_argument_must_match_authorized_context(self):
+        proposal = ProposedStep.model_validate_json(
+            action_json(arguments={"target_id": "target-other", "port": 80})
+        )
+        with self.assertRaisesRegex(ValueError, "authorized context target_id"):
+            proposal.validate_against(context())
+
+    def test_port_must_be_integer_and_match_supporting_finding(self):
+        for bad_port in ("80", 81, True):
+            proposal = ProposedStep.model_validate_json(
+                action_json(arguments={"target_id": "target-3", "port": bad_port})
+            )
+            with self.assertRaises(ValueError):
+                proposal.validate_against(context())
+
+    def test_adapter_emits_exact_worker_one_contract(self):
+        proposal = ProposedStep.model_validate_json(action_json())
+        canonical = proposal.to_canonical_proposal(context()).model_dump()
+        self.assertEqual(
+            set(canonical),
+            {"finding_ids", "action_name", "arguments", "reason", "learning_goal", "requires_approval"},
+        )
+        self.assertEqual(canonical["arguments"]["target_id"], "target-3")
+
+    def test_more_evidence_cannot_be_adapted_to_action_contract(self):
+        step = RuleBasedProvider().recommend_next_step(
+            context().model_copy(update={"allowed_actions": ()})
+        )
+        with self.assertRaisesRegex(ValueError, "not backend action proposals"):
+            step.to_canonical_proposal(context().model_copy(update={"allowed_actions": ()}))
+
 
 class PromptTests(unittest.TestCase):
     def test_evidence_instruction_is_delimited_and_not_promoted(self):
@@ -92,7 +139,15 @@ class RuleBasedTests(unittest.TestCase):
         self.assertEqual(proposal.kind, ProposalKind.ACTION)
         self.assertEqual(proposal.action_name, "inspect_http_headers")
         self.assertEqual(proposal.finding_ids, ["finding-12"])
-        self.assertEqual(proposal.arguments, {"port": 80})
+        self.assertEqual(proposal.arguments, {"target_id": "target-3", "port": 80})
+
+    def test_fallback_preserves_inferred_state_wording(self):
+        ctx = context().model_copy(
+            update={"findings": (context().findings[0].model_copy(update={"state": EvidenceState.INFERRED}),)}
+        )
+        proposal = RuleBasedProvider().recommend_next_step(ctx)
+        self.assertIn("inferred evidence", proposal.reason)
+        self.assertNotIn("observed", proposal.reason)
 
     def test_no_matching_action_requests_more_evidence(self):
         ctx = context().model_copy(update={"allowed_actions": ()})
@@ -119,6 +174,7 @@ class OllamaTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertIsInstance(calls[0][1]["format"], dict)
         self.assertEqual(provider.last_metrics.attempts, 1)
+        self.assertEqual(provider.last_code, ProviderCode.OLLAMA_SUCCESS)
 
     def test_malformed_output_retries_once_then_falls_back(self):
         calls = []
@@ -132,13 +188,24 @@ class OllamaTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(proposal.action_name, "inspect_http_headers")
         self.assertEqual(provider.last_metrics.attempts, 2)
+        self.assertEqual(provider.last_code, ProviderCode.OLLAMA_INVALID_OUTPUT_FALLBACK)
+
+    def test_missing_structured_content_has_sanitized_invalid_code(self):
+        def transport(url, body, timeout):
+            return {"message": {}}
+
+        provider = OllamaProvider(transport=transport, invalid_output_retries=0)
+        provider.recommend_next_step(context())
+        self.assertEqual(provider.last_code, ProviderCode.OLLAMA_INVALID_OUTPUT_FALLBACK)
 
     def test_timeout_uses_fallback(self):
         def transport(url, body, timeout):
             raise TimeoutError
 
-        proposal = OllamaProvider(transport=transport).recommend_next_step(context())
+        provider = OllamaProvider(transport=transport)
+        proposal = provider.recommend_next_step(context())
         self.assertEqual(proposal.action_name, "inspect_http_headers")
+        self.assertEqual(provider.last_code, ProviderCode.OLLAMA_UNAVAILABLE_FALLBACK)
 
     def test_model_cannot_reference_unsupported_finding(self):
         def transport(url, body, timeout):

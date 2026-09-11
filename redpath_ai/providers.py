@@ -15,16 +15,22 @@ from pydantic import ValidationError
 
 from .prompts import SYSTEM_PROMPT, explanation_prompt, recommendation_prompt
 from .schemas import (
+    ArgumentKind,
     Explanation,
     ProposalKind,
     ProposedStep,
     ProviderHealth,
+    ProviderCode,
     RecommendationContext,
 )
 
 
 class ProviderError(RuntimeError):
     """A provider failed without exposing untrusted response content."""
+
+
+class ProviderUnavailableError(ProviderError):
+    """The local provider could not be reached within its bounded request."""
 
 
 class LLMProvider(ABC):
@@ -53,6 +59,9 @@ class RuleBasedProvider(LLMProvider):
         "ssh": "check_tcp_connection",
     }
 
+    def __init__(self) -> None:
+        self.last_code = ProviderCode.RULE_BASED_SUCCESS
+
     def health(self) -> ProviderHealth:
         return ProviderHealth(available=True, provider="rule_based", detail="local fallback")
 
@@ -64,23 +73,30 @@ class RuleBasedProvider(LLMProvider):
             if action_name not in actions:
                 continue
             definition = actions[action_name]
-            known_values: dict[str, Any] = {
-                "port": finding.port,
-                "protocol": finding.protocol,
-                "finding_id": finding.id,
-            }
-            if any(name not in known_values or known_values[name] is None for name in definition.argument_names):
-                continue
-            arguments = {name: known_values[name] for name in definition.argument_names}
-            return ProposedStep(
-                kind=ProposalKind.ACTION,
-                finding_ids=[finding.id],
-                action_name=action_name,
-                arguments=arguments,
-                reason=f"The observed {service} service has a matching fixed learning action.",
-                learning_goal=f"Learn what a limited {service} check can and cannot show.",
-                requires_approval=True,
-            ).validate_against(context)
+            arguments: dict[str, Any] = {}
+            for constraint in definition.argument_constraints:
+                known_values = {
+                    ArgumentKind.TARGET_ID: context.target_id,
+                    ArgumentKind.PORT: finding.port,
+                    ArgumentKind.PROTOCOL: finding.protocol,
+                    ArgumentKind.FINDING_ID: finding.id,
+                }
+                value = known_values.get(constraint.kind)
+                if value is None and constraint.required:
+                    break
+                if value is not None:
+                    arguments[constraint.name] = value
+            else:
+                return ProposedStep(
+                    kind=ProposalKind.ACTION,
+                    finding_ids=[finding.id],
+                    action_name=action_name,
+                    arguments=arguments,
+                    reason=(f"The {service} service is {finding.state.value} evidence and "
+                            "has a matching fixed learning action."),
+                    learning_goal=f"Learn what a limited {service} check can and cannot show.",
+                    requires_approval=True,
+                ).validate_against(context)
         return ProposedStep(
             kind=ProposalKind.MORE_EVIDENCE,
             finding_ids=[],
@@ -137,6 +153,7 @@ class OllamaProvider(LLMProvider):
         self.fallback = fallback or RuleBasedProvider()
         self._transport = transport or self._http_transport
         self.last_metrics: ProviderMetrics | None = None
+        self.last_code: ProviderCode | None = None
 
     def health(self) -> ProviderHealth:
         try:
@@ -169,14 +186,25 @@ class OllamaProvider(LLMProvider):
                 proposal = ProposedStep.model_validate_json(self._content(payload))
                 proposal.validate_against(context)
                 self._record_metrics(payload, started, attempt)
+                self.last_code = ProviderCode.OLLAMA_SUCCESS
                 return proposal
-            except (ProviderError, ValidationError, ValueError, TypeError, KeyError, OSError):
+            except (ProviderUnavailableError, OSError):
                 if attempt == attempts:
                     self.last_metrics = ProviderMetrics(
                         model=self.model,
                         latency_ms=int((time.monotonic() - started) * 1000),
                         attempts=attempt,
                     )
+                    self.last_code = ProviderCode.OLLAMA_UNAVAILABLE_FALLBACK
+                    return self.fallback.recommend_next_step(context)
+            except (ProviderError, ValidationError, ValueError, TypeError, KeyError):
+                if attempt == attempts:
+                    self.last_metrics = ProviderMetrics(
+                        model=self.model,
+                        latency_ms=int((time.monotonic() - started) * 1000),
+                        attempts=attempt,
+                    )
+                    self.last_code = ProviderCode.OLLAMA_INVALID_OUTPUT_FALLBACK
                     return self.fallback.recommend_next_step(context)
         raise AssertionError("unreachable")
 
@@ -185,6 +213,7 @@ class OllamaProvider(LLMProvider):
             payload = self._chat(explanation_prompt(result), Explanation.model_json_schema())
             return Explanation.model_validate_json(self._content(payload))
         except (ProviderError, ValidationError, ValueError, TypeError, KeyError, OSError):
+            self.last_code = ProviderCode.EXPLANATION_FALLBACK
             return self.fallback.explain_result(result)
 
     def _chat(self, user_prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
@@ -234,5 +263,7 @@ class OllamaProvider(LLMProvider):
                 if not isinstance(payload, dict):
                     raise ProviderError("Ollama response was not an object")
                 return payload
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise ProviderError("local Ollama request failed") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise ProviderUnavailableError("local Ollama request failed") from exc
+        except json.JSONDecodeError as exc:
+            raise ProviderError("local Ollama returned invalid JSON") from exc
