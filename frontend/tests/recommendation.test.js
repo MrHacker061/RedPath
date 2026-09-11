@@ -24,6 +24,14 @@ const response = {
   debug: "do-not-show",
 };
 
+function executionResult(overrides = {}) {
+  return {
+    action_id: "action-1", status: "completed", exit_code: 0, parser: "tcp_connection_v1", cleanup_status: "completed",
+    evidence: [{ kind: "tcp_connection", action_name: "check_tcp_connection", target_id: "target-1", target_address: "192.168.56.20", port: 22, outcome: "succeeded", output_truncated: false, reachable: true, failure_category: null }],
+    ...overrides,
+  };
+}
+
 class FakeNode {
   constructor(tagName = "div") {
     this.tagName = tagName;
@@ -260,22 +268,51 @@ test("proposal renderer disables only approval when emergency stop is active", (
   assert.equal(elements.reject.disabled, false);
 });
 
+test("run controls hide and move focus when a proposal is pending, denied, expired, or stop-blocked", () => {
+  const elements = {
+    controls: new FakeNode(), runControls: new FakeNode(), approve: new FakeNode("button"), reject: new FakeNode("button"),
+    run: new FakeNode("button"), message: new FakeNode(),
+  };
+  workflow.renderProposalState(elements, { status: "pending", busy: false, emergencyStopActive: false, executionAvailable: false, message: "Review." }, true);
+  assert.equal(elements.controls.hidden, false);
+  assert.equal(elements.runControls.hidden, true);
+  assert.equal(elements.run.disabled, true);
+  workflow.renderProposalState(elements, { status: "rejected", busy: false, emergencyStopActive: false, executionAvailable: false, message: "Denied." }, true);
+  assert.equal(elements.controls.hidden, true);
+  assert.equal(elements.runControls.hidden, true);
+  assert.equal(elements.run.disabled, true);
+  assert.equal(elements.message.focused, true);
+});
+
+test("a pending approval blocks a conflicting recommendation request", () => {
+  assert.equal(workflow.recommendationRequestDisabled(true, { busy: true }), true);
+  assert.equal(workflow.recommendationRequestDisabled(true, { busy: false }), false);
+  assert.equal(workflow.recommendationRequestDisabled(false, { busy: false }), true);
+});
+
 test("run stays disabled until current approval and a confirmed clear stop", () => {
   const elements = {
     controls: new FakeNode(), approve: new FakeNode("button"), reject: new FakeNode("button"),
-    run: new FakeNode("button"), message: new FakeNode(),
+    runControls: new FakeNode(), run: new FakeNode("button"), message: new FakeNode(),
   };
-  const approved = { status: "approved", busy: false, emergencyStopActive: false, executionAvailable: true, message: "Approved.", receipt: { expiresAt: "2030-01-01T00:00:00Z" } };
+  const approved = { status: "approved", busy: false, emergencyStopActive: false, executionAvailable: true, message: "Approved.", receipt: { proposalId: "proposal-1", expiresAt: "2030-01-01T00:00:00Z" }, recommendation: workflow.normalizeRecommendation(response) };
   workflow.renderProposalState(elements, approved, false);
   assert.equal(elements.run.disabled, true);
+  assert.equal(elements.runControls.hidden, true);
   workflow.renderProposalState(elements, approved, true);
   assert.equal(elements.run.disabled, false);
+  assert.equal(elements.runControls.hidden, false);
+  elements.run.focus();
+  workflow.renderProposalState(elements, { ...approved, receipt: { ...approved.receipt, expiresAt: "2028-01-01T00:00:00Z" } }, true, Date.parse("2029-01-01T00:00:00Z"));
+  assert.equal(elements.run.disabled, true);
+  assert.equal(elements.runControls.hidden, true);
+  assert.equal(elements.message.focused, true);
 });
 
 test("run requires native confirmation and sends only the stored exact proposal", async () => {
   const calls = [];
   const controller = new workflow.ProposalWorkflow({
-    api: { approveProposal: async () => ({ proposal_id: "proposal-1", status: "approved", approval_id: "approval-1", expires_at: "2030-01-01T00:00:00Z" }), runProposal: async (...args) => { calls.push(args); return { action_id: "action-1", status: "completed", exit_code: 0, parser: "tcp_connection_v1", evidence: [], cleanup_status: "completed" }; } },
+    api: { approveProposal: async () => ({ proposal_id: "proposal-1", status: "approved", approval_id: "approval-1", expires_at: "2030-01-01T00:00:00Z" }), runProposal: async (...args) => { calls.push(args); return executionResult(); } },
     now: () => Date.parse("2029-01-01T00:00:00Z"),
     confirmRun: () => false,
   });
@@ -291,9 +328,45 @@ test("run requires native confirmation and sends only the stored exact proposal"
   assert.equal(controller.state.status, "completed");
 });
 
-test("execution result normalization rejects unsafe results", () => {
-  assert.throws(() => workflow.normalizeExecutionResult({ action_id: "a", status: "completed", exit_code: 0, parser: "shell", evidence: [], cleanup_status: "completed" }), /unavailable/i);
-  const result = workflow.normalizeExecutionResult({ action_id: "a", status: "completed", exit_code: 0, parser: "tcp_connection_v1", evidence: [{ kind: "tcp_connection", action_name: "check_tcp_connection", target_id: "target-1", target_address: "<script>x</script>", port: 22, outcome: "succeeded", output_truncated: false, http_status: null, failure_category: null, raw_output: "never" }], cleanup_status: "completed" }, "check_tcp_connection");
-  assert.equal(result.evidence[0].targetAddress, "<script>x</script>");
-  assert.equal(JSON.stringify(result).includes("never"), false);
+test("approval completion cannot overwrite a newer proposal generation", async () => {
+  let resolveApproval;
+  const controller = new workflow.ProposalWorkflow({ api: { approveProposal: () => new Promise((resolve) => { resolveApproval = resolve; }) }, now: () => Date.parse("2029-01-01T00:00:00Z") });
+  controller.setEmergencyStop(false);
+  controller.load(workflow.normalizeRecommendation(response));
+  const pending = controller.decide("approve");
+  const replacement = structuredClone(response);
+  replacement.proposal.id = "proposal-2";
+  replacement.policy_decision.proposal_id = "proposal-2";
+  controller.load(workflow.normalizeRecommendation(replacement));
+  resolveApproval({ proposal_id: "proposal-1", status: "approved", approval_id: "approval-1", expires_at: "2030-01-01T00:00:00Z" });
+  assert.equal(await pending, false);
+  assert.equal(controller.state.recommendation.proposal.id, "proposal-2");
+  assert.equal(controller.state.status, "pending");
+  assert.equal(controller.state.executionAvailable, false);
+});
+
+test("execution result normalization requires the exact fixed result union and approved scope", () => {
+  const proposal = workflow.normalizeRecommendation(response).proposal;
+  const result = workflow.normalizeExecutionResult(executionResult(), proposal);
+  assert.equal(result.evidence[0].targetAddress, "192.168.56.20");
+  for (const payload of [
+    executionResult({ evidence: [{ ...executionResult().evidence[0], kind: "arbitrary" }] }),
+    executionResult({ cleanup_status: "arbitrary" }),
+    executionResult({ evidence: [executionResult().evidence[0], executionResult().evidence[0]] }),
+    executionResult({ evidence: [{ ...executionResult().evidence[0], target_id: "other-target" }] }),
+    executionResult({ evidence: [{ ...executionResult().evidence[0], port: 4444 }] }),
+  ]) assert.throws(() => workflow.normalizeExecutionResult(payload, proposal), /unavailable/i);
+});
+
+test("execution result normalization handles only the HTTP and TLS union variants", () => {
+  const http = structuredClone(response);
+  http.proposal.action_name = "inspect_http_headers";
+  http.proposal.arguments = { target_id: "target-1", port: 80 };
+  const tls = structuredClone(response);
+  tls.proposal.action_name = "inspect_tls_certificate";
+  tls.proposal.arguments = { target_id: "target-1", port: 443 };
+  const httpProposal = workflow.normalizeRecommendation(http).proposal;
+  const tlsProposal = workflow.normalizeRecommendation(tls).proposal;
+  assert.equal(workflow.normalizeExecutionResult({ action_id: "http-1", status: "completed", exit_code: 0, parser: "http_headers_v1", cleanup_status: "completed", evidence: [{ kind: "http_headers", action_name: "inspect_http_headers", target_id: "target-1", target_address: "192.168.56.20", port: 80, outcome: "succeeded", output_truncated: false, http_status: 200, failure_category: null }] }, httpProposal).evidence[0].httpStatus, 200);
+  assert.equal(workflow.normalizeExecutionResult({ action_id: "tls-1", status: "completed", exit_code: 0, parser: "tls_certificate_v1", cleanup_status: "completed", evidence: [{ kind: "tls_certificate", action_name: "inspect_tls_certificate", target_id: "target-1", target_address: "192.168.56.20", port: 443, outcome: "succeeded", output_truncated: false, protocol: "TLSv1.3", cipher_suite: "TLS_AES_256_GCM_SHA384", verification: "verified", failure_category: null }] }, tlsProposal).evidence[0].verification, "verified");
 });

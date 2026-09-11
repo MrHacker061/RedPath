@@ -1,4 +1,5 @@
 const DEFAULT_TIMEOUT_MS = 5000;
+export const SETUP_OPERATION_TIMEOUT_MS = 30 * 60_000;
 const SETUP_COMPONENTS = new Set(["ollama", "model", "wsl", "kali"]);
 
 function setupComponent(component) {
@@ -16,11 +17,13 @@ export class ApiError extends Error {
 }
 
 export class RedPathApi {
-  constructor({ baseUrl = "/api/v1", fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  constructor({ baseUrl = "/api/v1", fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS, setTimeoutImpl = globalThis.setTimeout, clearTimeoutImpl = globalThis.clearTimeout } = {}) {
     if (typeof fetchImpl !== "function") throw new TypeError("A fetch implementation is required.");
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.fetchImpl = fetchImpl;
     this.timeoutMs = timeoutMs;
+    this.setTimeoutImpl = setTimeoutImpl;
+    this.clearTimeoutImpl = clearTimeoutImpl;
   }
 
   async getHealth() {
@@ -29,7 +32,7 @@ export class RedPathApi {
 
   getSetup() { return this.request("/setup"); }
   repairSetup(component) {
-    return this.request(`/setup/${encodeURIComponent(setupComponent(component))}/repair`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ consent: true }) });
+    return this.request(`/setup/${encodeURIComponent(setupComponent(component))}/repair`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ consent: true }), timeoutMs: SETUP_OPERATION_TIMEOUT_MS });
   }
   cancelSetup(component) { return this.request(`/setup/${encodeURIComponent(setupComponent(component))}/cancel`, { method: "POST" }); }
   getDiagnostics() { return this.request("/diagnostics"); }
@@ -91,12 +94,13 @@ export class RedPathApi {
   }
 
   async request(path, options = {}) {
+    const { timeoutMs = this.timeoutMs, ...requestOptions } = options;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeout = this.setTimeoutImpl(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-        ...options,
-        headers: { Accept: "application/json", ...options.headers },
+        ...requestOptions,
+        headers: { Accept: "application/json", ...requestOptions.headers },
         signal: controller.signal,
         credentials: "same-origin",
       });
@@ -119,7 +123,7 @@ export class RedPathApi {
       }
       throw new ApiError("RedPath API is unavailable.", { code: "NETWORK_ERROR" });
     } finally {
-      clearTimeout(timeout);
+      this.clearTimeoutImpl(timeout);
     }
   }
 }

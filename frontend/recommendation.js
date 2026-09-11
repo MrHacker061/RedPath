@@ -8,6 +8,12 @@ const ACTION_PARSERS = Object.freeze({
   inspect_http_headers: "http_headers_v1",
   inspect_tls_certificate: "tls_certificate_v1",
 });
+const ACTION_KINDS = Object.freeze({
+  check_tcp_connection: "tcp_connection",
+  inspect_http_headers: "http_headers",
+  inspect_tls_certificate: "tls_certificate",
+});
+const CLEANUP_STATUSES = new Set(["not_required", "completed", "failed"]);
 
 function unavailable() {
   throw new TypeError("The recommendation is unavailable because its response was invalid.");
@@ -94,14 +100,32 @@ export function renderRecommendation(elements, recommendation, documentImpl = do
   elements.heading.focus();
 }
 
-export function renderProposalState(elements, state, emergencyStopClear = false) {
+function currentApproval(state, now = Date.now()) {
+  const receipt = state.receipt;
+  const proposal = state.recommendation?.proposal;
+  return state.status === "approved" && state.busy === false && state.emergencyStopActive === false
+    && receipt?.proposalId === proposal?.id && Number.isFinite(Date.parse(receipt?.expiresAt))
+    && Date.parse(receipt.expiresAt) > now;
+}
+
+export function recommendationRequestDisabled(recommendationReady, state) {
+  return !recommendationReady || state?.busy === true;
+}
+
+export function renderProposalState(elements, state, emergencyStopClear = false, now = Date.now()) {
   const canDecide = state.status === "pending" && !state.busy;
-  elements.controls.hidden = state.status !== "pending";
+  const hideDecisionControls = state.status !== "pending";
+  const wasDecisionControlsVisible = !elements.controls.hidden;
+  const wasRunControlsVisible = Boolean(elements.runControls && !elements.runControls.hidden);
+  const canRun = currentApproval(state, now) && state.executionAvailable === true && emergencyStopClear === true;
+  elements.controls.hidden = hideDecisionControls;
   elements.approve.disabled = !canDecide || state.emergencyStopActive !== false;
   elements.reject.disabled = !canDecide;
   elements.message.dataset.state = state.status;
   elements.message.textContent = state.message;
-  if (elements.run) elements.run.disabled = !(state.status === "approved" && !state.busy && state.executionAvailable === true && emergencyStopClear === true);
+  if (elements.runControls) elements.runControls.hidden = !canRun;
+  if (elements.run) elements.run.disabled = !canRun;
+  if ((hideDecisionControls && wasDecisionControlsVisible) || (wasRunControlsVisible && !canRun)) (canRun ? elements.run : elements.message)?.focus?.();
 }
 
 function pendingProposalMessage(emergencyStopActive) {
@@ -125,20 +149,33 @@ function normalizeDecisionReceipt(payload, expectedProposalId) {
   };
 }
 
-export function normalizeExecutionResult(payload, actionName) {
-  if (!Object.hasOwn(ACTION_PARSERS, actionName) || !payload || !["completed", "failed", "timed_out"].includes(payload.status)) unavailable();
-  if (payload.parser !== ACTION_PARSERS[actionName] || !Array.isArray(payload.evidence) || payload.evidence.length > 100) unavailable();
+export function normalizeExecutionResult(payload, proposal) {
+  const actionName = proposal?.actionName;
+  const expectedOutcome = { completed: "succeeded", failed: "failed", timed_out: "timed_out" };
+  if (!Object.hasOwn(ACTION_PARSERS, actionName) || !payload || !Object.hasOwn(expectedOutcome, payload.status)) unavailable();
+  if (payload.parser !== ACTION_PARSERS[actionName] || !Array.isArray(payload.evidence) || payload.evidence.length !== 1 || !CLEANUP_STATUSES.has(payload.cleanup_status)) unavailable();
   if (!(payload.exit_code === null || Number.isInteger(payload.exit_code))) unavailable();
-  const evidence = payload.evidence.map((item) => {
-    if (!item || item.action_name !== actionName || !["succeeded", "failed", "timed_out"].includes(item.outcome) || !Number.isInteger(item.port) || item.port < 1 || item.port > 65535 || typeof item.output_truncated !== "boolean") unavailable();
-    if (!(item.http_status === null || (Number.isInteger(item.http_status) && item.http_status >= 100 && item.http_status <= 599)) || !(item.failure_category === null || typeof item.failure_category === "string")) unavailable();
-    return {
-      kind: boundedText(item.kind, 80), targetId: boundedText(item.target_id, 128), targetAddress: boundedText(item.target_address, 128), port: item.port,
-      outcome: item.outcome, outputTruncated: item.output_truncated, httpStatus: item.http_status,
-      failureCategory: item.failure_category === null ? null : boundedText(item.failure_category, 80),
-    };
-  });
-  return { actionId: boundedText(payload.action_id, 128), status: payload.status, exitCode: payload.exit_code, parser: payload.parser, evidence, cleanupStatus: boundedText(payload.cleanup_status, 80) };
+  const item = payload.evidence[0];
+  if (!item || item.kind !== ACTION_KINDS[actionName] || item.action_name !== actionName || item.target_id !== proposal.arguments.target_id || item.port !== proposal.arguments.port || item.outcome !== expectedOutcome[payload.status] || typeof item.output_truncated !== "boolean") unavailable();
+  const failureCategory = payload.status === "completed" ? null : payload.status === "timed_out" ? "timed_out" : "fixed_action_failed";
+  if (item.failure_category !== failureCategory) unavailable();
+  const evidence = {
+    kind: ACTION_KINDS[actionName], targetId: boundedText(item.target_id, 128), targetAddress: boundedText(item.target_address, 128), port: item.port,
+    outcome: item.outcome, outputTruncated: item.output_truncated, failureCategory,
+  };
+  if (actionName === "check_tcp_connection") {
+    if (typeof item.reachable !== "boolean") unavailable();
+    evidence.reachable = item.reachable;
+  } else if (actionName === "inspect_http_headers") {
+    if (!(item.http_status === null || (Number.isInteger(item.http_status) && item.http_status >= 100 && item.http_status <= 599))) unavailable();
+    evidence.httpStatus = item.http_status;
+  } else {
+    if (!(item.protocol === null || ["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"].includes(item.protocol)) || !(item.cipher_suite === null || /^[A-Z0-9_-]{1,64}$/.test(item.cipher_suite)) || !["verified", "failed", "unknown"].includes(item.verification)) unavailable();
+    evidence.protocol = item.protocol;
+    evidence.cipherSuite = item.cipher_suite;
+    evidence.verification = item.verification;
+  }
+  return { actionId: boundedText(payload.action_id, 128), status: payload.status, exitCode: payload.exit_code, parser: payload.parser, evidence: [evidence], cleanupStatus: payload.cleanup_status };
 }
 
 export class ProposalWorkflow {
@@ -147,7 +184,7 @@ export class ProposalWorkflow {
     this.now = now;
     this.onChange = onChange;
     this.confirmRun = confirmRun;
-    this.state = { status: "idle", busy: false, message: "No recommendation requested.", executionAvailable: false, emergencyStopActive: true };
+    this.state = { status: "idle", busy: false, generation: 0, message: "No recommendation requested.", executionAvailable: false, emergencyStopActive: true };
   }
 
   load(recommendation) {
@@ -163,6 +200,7 @@ export class ProposalWorkflow {
       emergencyStopActive,
       recommendation,
       receipt: null,
+      generation: this.state.generation + 1,
     };
     this.emit();
   }
@@ -170,14 +208,16 @@ export class ProposalWorkflow {
   async decide(choice) {
     if (this.state.status !== "pending" || this.state.busy || !["approve", "reject"].includes(choice)) return false;
     if (choice === "approve" && this.state.emergencyStopActive !== false) return false;
+    const { proposal } = this.state.recommendation;
+    const generation = this.state.generation;
     this.state = { ...this.state, busy: true, message: `${choice === "approve" ? "Approving" : "Rejecting"} the exact proposal…` };
     this.emit();
-    const { proposal } = this.state.recommendation;
     try {
       const payload = choice === "approve"
         ? await this.api.approveProposal(proposal.sessionId, proposal.id)
         : await this.api.rejectProposal(proposal.sessionId, proposal.id);
       const receipt = normalizeDecisionReceipt(payload, proposal.id);
+      if (this.state.generation !== generation || this.state.recommendation?.proposal.id !== proposal.id) return false;
       const expired = receipt.status === "approved" && Date.parse(receipt.expiresAt) <= this.now();
       const status = expired ? "expired" : receipt.status;
       this.state = {
@@ -185,7 +225,7 @@ export class ProposalWorkflow {
         status,
         busy: false,
         receipt,
-        executionAvailable: status === "approved" && this.state.emergencyStopActive === false,
+        executionAvailable: currentApproval({ ...this.state, status, busy: false, receipt }, this.now()),
         message: status === "approved"
           ? "Approved for this exact action and arguments. Confirm before running it."
           : status === "expired"
@@ -193,6 +233,7 @@ export class ProposalWorkflow {
             : "Proposal rejected. It cannot be approved or executed.",
       };
     } catch {
+      if (this.state.generation !== generation || this.state.recommendation?.proposal.id !== proposal.id) return false;
       this.state = {
         ...this.state,
         status: "error",
@@ -214,13 +255,13 @@ export class ProposalWorkflow {
 
   async run() {
     const { receipt, recommendation } = this.state;
-    if (this.state.status !== "approved" || this.state.busy || this.state.emergencyStopActive !== false || !this.state.executionAvailable || !receipt || Date.parse(receipt.expiresAt) <= this.now()) return false;
+    if (!currentApproval(this.state, this.now()) || !this.state.executionAvailable || !receipt || receipt.proposalId !== recommendation?.proposal.id) return false;
     if (typeof this.confirmRun !== "function" || this.confirmRun("Run this exact approved learning action? RedPath will not run any other action or target.") !== true) return false;
     const proposal = recommendation.proposal;
     this.state = { ...this.state, busy: true, executionAvailable: false, message: "Running the exact approved action…" };
     this.emit();
     try {
-      const result = normalizeExecutionResult(await this.api.runProposal(proposal.sessionId, proposal.id), proposal.actionName);
+      const result = normalizeExecutionResult(await this.api.runProposal(proposal.sessionId, proposal.id), proposal);
       this.state = { ...this.state, status: result.status, busy: false, executionAvailable: false, result, message: `Action ${result.status}. Review bounded results below.` };
     } catch {
       this.state = { ...this.state, status: "error", busy: false, executionAvailable: false, message: "The approved action could not be completed. Review the report and audit history." };
@@ -231,7 +272,7 @@ export class ProposalWorkflow {
 
   setEmergencyStop(active) {
     const emergencyStopActive = active !== false;
-    const approvedAndCurrent = this.state.status === "approved" && Date.parse(this.state.receipt?.expiresAt) > this.now();
+    const approvedAndCurrent = currentApproval({ ...this.state, emergencyStopActive }, this.now());
     this.state = {
       ...this.state,
       emergencyStopActive,

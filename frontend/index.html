@@ -140,9 +140,11 @@
           <div id="proposal-controls" class="proposal-controls" role="group" aria-label="Exact proposal decision">
             <button id="approve-proposal" type="button">Approve exact proposal</button>
             <button id="reject-proposal" class="secondary-button" type="button">Reject proposal</button>
+          </div>
+          <div id="run-controls" class="proposal-controls" role="group" aria-label="Approved proposal execution" hidden>
             <button id="run-proposal" type="button" disabled>Run exact approved action</button>
           </div>
-          <p id="proposal-state" class="notice" role="status" aria-live="polite">Waiting for a policy decision.</p>
+          <p id="proposal-state" class="notice" role="status" aria-live="polite" tabindex="-1">Waiting for a policy decision.</p>
           <p class="detail">Approval does not run anything. Running is shown only while this exact approval remains valid and the emergency stop is confirmed clear.</p>
         </article>
       </div>

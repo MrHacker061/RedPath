@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ApiError, RedPathApi, normalizeExplanation, normalizeFinding, normalizeHealth } from "../api.js";
+import { ApiError, RedPathApi, SETUP_OPERATION_TIMEOUT_MS, normalizeExplanation, normalizeFinding, normalizeHealth } from "../api.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -181,6 +181,22 @@ test("setup, diagnostics, and execution client requests use only fixed routes an
     { url: "/api/v1/sessions/session%20%2F1/proposals/proposal%20%2F1/run", method: "POST", body: undefined },
   ]);
   assert.throws(() => api.repairSetup("shell"), /unavailable/i);
+});
+
+test("setup repair uses a bounded long operation timeout and aborts only when it expires", async () => {
+  let timer;
+  let signal;
+  const api = new RedPathApi({
+    setTimeoutImpl: (callback, delay) => { timer = { callback, delay }; return 1; },
+    clearTimeoutImpl: () => {},
+    fetchImpl: (_url, options) => { signal = options.signal; return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")))); },
+  });
+  const request = api.repairSetup("kali");
+  assert.equal(timer.delay, SETUP_OPERATION_TIMEOUT_MS);
+  assert.equal(signal.aborted, false);
+  timer.callback();
+  await assert.rejects(request, { code: "TIMEOUT" });
+  assert.equal(signal.aborted, true);
 });
 
 test("finding normalization keeps bounded evidence fields", () => {

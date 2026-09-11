@@ -1,5 +1,5 @@
 import { RedPathApi, normalizeExplanation, normalizeFinding, normalizeHealth } from "./api.js";
-import { normalizeRecommendation, ProposalWorkflow, renderProposalState, renderRecommendation } from "./recommendation.js";
+import { normalizeRecommendation, ProposalWorkflow, recommendationRequestDisabled, renderProposalState, renderRecommendation } from "./recommendation.js";
 import { SetupController, normalizeDiagnostics } from "./setup.js";
 import {
   EmergencyStopWorkflow,
@@ -40,6 +40,7 @@ const proposalElements = {
   reject: document.querySelector("#reject-proposal"),
   message: document.querySelector("#proposal-state"),
   run: document.querySelector("#run-proposal"),
+  runControls: document.querySelector("#run-controls"),
 };
 const executionNotice = document.querySelector("#execution-notice");
 const setupElements = {
@@ -80,6 +81,7 @@ const proposalWorkflow = new ProposalWorkflow({
   onChange: (state) => {
     renderProposalState(proposalElements, state, emergencyStopIsClear());
     renderExecutionNotice(state);
+    recommendationButton.disabled = recommendationRequestDisabled(recommendationReady, state);
     if (state.result) renderResults(state.result);
     clearTimeout(approvalTimer);
     if (state.status === "approved") {
@@ -173,6 +175,7 @@ function resetRecommendation(text) {
   proposalElements.approve.disabled = true;
   proposalElements.reject.disabled = true;
   proposalElements.run.disabled = true;
+  proposalElements.runControls.hidden = true;
   clearResults();
 }
 
@@ -346,7 +349,7 @@ scanForm.addEventListener("submit", async (event) => {
 });
 
 recommendationButton.addEventListener("click", async () => {
-  if (!activeSessionId || !recommendationReady || recommendationPending) return;
+  if (!activeSessionId || recommendationPending || recommendationRequestDisabled(recommendationReady, proposalWorkflow.state)) return;
   recommendationPending = true;
   recommendationButton.disabled = true;
   recommendationButton.setAttribute("aria-busy", "true");

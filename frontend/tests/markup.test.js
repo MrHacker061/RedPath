@@ -67,6 +67,8 @@ test("session oversight provides accessible report and audit regions", () => {
 
 test("guided workflow exposes only the guarded exact-proposal execution control", () => {
   assert.match(html, /id="run-proposal"[^>]*type="button"[^>]*disabled/);
+  assert.match(html, /id="run-controls"[^>]*hidden/);
+  assert.match(html, /id="proposal-state"[^>]*tabindex="-1"/);
   assert.doesNotMatch(html, /(?:command|action_name|distribution)[^>]*name=/i);
   assert.match(html, /id="execution-notice"[^>]*role="status"[^>]*aria-live="polite"/);
 });
