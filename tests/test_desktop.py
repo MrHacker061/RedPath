@@ -1,6 +1,7 @@
 """Desktop lifecycle tests: no real sockets, application data, or native windows."""
 
 import importlib
+import io
 import json
 import sys
 from threading import Event
@@ -103,6 +104,94 @@ def test_health_wait_does_not_sleep_past_deadline(environment, monkeypatch):
     assert sum(sleeps) == 0
 
 
+def test_late_success_cannot_mark_host_ready(environment, monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr(desktop.time, "monotonic", lambda: now[0])
+
+    def late_success(*_):
+        now[0] = 15.5
+        return True
+
+    host = desktop.DesktopHost(server_factory=lambda *_: FakeServer(), health_probe=late_success)
+    try:
+        with pytest.raises(desktop.DesktopStartupError, match="DESKTOP_HEALTH_TIMEOUT"):
+            host.start()
+        assert host.url is None
+        assert not host.thread.is_alive()
+    finally:
+        host.stop()
+
+
+@pytest.mark.parametrize("slow_part", ["headers", "body", "none"])
+def test_progressive_response_cannot_extend_health_deadline(monkeypatch, slow_part):
+    now = [0.0]
+    monkeypatch.setattr(desktop.time, "monotonic", lambda: now[0])
+    payload = b'{"status":"ok","database":"ok","service":"redpath-api"}'
+    headers = f"HTTP/1.1 200 OK\r\nContent-Length: {len(payload)}\r\n\r\n".encode()
+    chunks = (
+        [(0.09, headers[:12]), (0.09, headers[12:]), (0.09, payload)]
+        if slow_part == "headers" else
+        [(0.01, headers), (0.09, payload[:10]), (0.09, payload[10:20]), (0.09, payload[20:])]
+    )
+    if slow_part == "none":
+        chunks = [(0.01, headers), (0.01, payload)]
+
+    class ProgressiveSocket:
+        def __init__(self):
+            self.timeout = 0.2
+            self.timeouts = []
+            self.closed = False
+
+        def settimeout(self, timeout):
+            self.timeout = timeout
+            self.timeouts.append((now[0], timeout))
+
+        def sendall(self, _):
+            now[0] += 0.01
+
+        def setsockopt(self, *_):
+            pass
+
+        def makefile(self, *_args, **_kwargs):
+            owner = self
+
+            class Incoming(io.RawIOBase):
+                def readable(self):
+                    return True
+
+                def readinto(self, buffer):
+                    if not chunks:
+                        return 0
+                    delay, data = chunks.pop(0)
+                    if delay > owner.timeout:
+                        now[0] += owner.timeout
+                        raise TimeoutError
+                    now[0] += delay
+                    buffer[:len(data)] = data
+                    return len(data)
+
+            return io.BufferedReader(Incoming())
+
+        def close(self):
+            self.closed = True
+
+    transport = ProgressiveSocket()
+    connection = desktop.HTTPConnection("127.0.0.1", 43210, timeout=0.2)
+
+    def connect(_address, timeout, *_args):
+        transport.settimeout(timeout)
+        now[0] += 0.02
+        return transport
+
+    connection._create_connection = connect
+    factory = lambda *_args, **_kwargs: connection
+    monkeypatch.setattr(desktop, "HTTPConnection", factory)
+    assert desktop._health_probe("http://127.0.0.1:43210/api/v1/health", 0.2) is (slow_part == "none")
+    assert now[0] <= 0.2
+    assert all(timeout <= 0.2 - at for at, timeout in transport.timeouts)
+    assert transport.closed
+
+
 def test_initialization_failure_closes_reserved_socket(environment):
     host = desktop.DesktopHost(server_factory=Mock(side_effect=ValueError("private")))
     with pytest.raises(desktop.DesktopStartupError, match="DESKTOP_SERVER_FAILED"):
@@ -128,9 +217,10 @@ def test_uvicorn_config_is_one_worker_loopback_without_console_logging(monkeypat
     ({"status": "ok", "database": "ok", "service": "other"}, False),
 ])
 def test_health_requires_correct_service_and_healthy_database(monkeypatch, payload, expected):
+    monkeypatch.setattr(desktop.time, "monotonic", lambda: 0.0)
     connection = Mock()
     connection.getresponse.return_value = SimpleNamespace(
-        status=200, read=lambda _: json.dumps(payload).encode()
+        status=200, read=lambda _: json.dumps(payload).encode(), close=lambda: None
     )
     factory = Mock(return_value=connection)
     monkeypatch.setattr(desktop, "HTTPConnection", factory)

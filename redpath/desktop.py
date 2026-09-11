@@ -2,6 +2,7 @@
 
 import ctypes
 import importlib
+import io
 import json
 import os
 import platform
@@ -9,7 +10,7 @@ import socket
 import sys
 import time
 from collections.abc import Callable
-from http.client import HTTPConnection
+from http.client import HTTPConnection, HTTPException, HTTPResponse
 from pathlib import Path
 from threading import Thread
 from typing import Any
@@ -53,20 +54,64 @@ def _create_server(app: Any, port: int) -> Any:
     ))
 
 
-def _health_probe(url: str, timeout: float) -> bool:
+def _remaining(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError
+    return remaining
+
+
+class _DeadlineReader(io.RawIOBase):
+    """Keep buffered HTTP header/body reads inside one absolute deadline."""
+
+    def __init__(self, raw: io.RawIOBase, sock: socket.socket, deadline: float):
+        self.raw, self.sock, self.deadline = raw, sock, deadline
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        self.sock.settimeout(_remaining(self.deadline))
+        count = self.raw.readinto(buffer)
+        _remaining(self.deadline)
+        return count
+
+    def close(self) -> None:
+        self.raw.close()
+        super().close()
+
+
+def _health_probe(url: str, deadline: float) -> bool:
     parsed = urlsplit(url)
-    connection = HTTPConnection("127.0.0.1", parsed.port, timeout=timeout)
+    deadline = min(deadline, time.monotonic() + 0.25)
+    connection = None
+    response = None
+
+    def bounded_response(sock: socket.socket, **kwargs: Any) -> HTTPResponse:
+        result = HTTPResponse(sock, **kwargs)
+        result.fp = io.BufferedReader(_DeadlineReader(result.fp.detach(), sock, deadline))
+        return result
+
     try:
+        connection = HTTPConnection("127.0.0.1", parsed.port, timeout=_remaining(deadline))
+        connection.response_class = bounded_response
+        connection.connect()
+        connection.sock.settimeout(_remaining(deadline))
         connection.request("GET", "/api/v1/health")
+        _remaining(deadline)
         response = connection.getresponse()
         payload = json.loads(response.read(4096))
+        _remaining(deadline)
         return response.status == 200 and isinstance(payload, dict) and (
             payload.get("status"), payload.get("database"), payload.get("service")
         ) == ("ok", "ok", "redpath-api")
-    except (OSError, ValueError):
+    except (OSError, ValueError, HTTPException):
         return False
     finally:
-        connection.close()
+        if response is not None:
+            response.close()
+        if connection is not None:
+            connection.close()
 
 
 class DesktopHost:
@@ -108,7 +153,10 @@ class DesktopHost:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise DesktopStartupError("DESKTOP_HEALTH_TIMEOUT: RedPath did not become ready within 15 seconds. Restart and check local diagnostics.")
-                if self.health_probe(url + "/api/v1/health", min(0.25, remaining)):
+                healthy = self.health_probe(url + "/api/v1/health", deadline)
+                if time.monotonic() >= deadline:
+                    raise DesktopStartupError("DESKTOP_HEALTH_TIMEOUT: RedPath did not become ready within 15 seconds. Restart and check local diagnostics.")
+                if healthy:
                     self.url = url
                     return url
                 time.sleep(max(0, min(0.05, deadline - time.monotonic())))
