@@ -9,6 +9,7 @@ from redpath import __version__
 from redpath.config import Settings, get_settings
 from redpath.contracts import ComponentHealth, HealthResponse
 from redpath.database import Base, create_database
+from redpath.session_api import router as session_router
 import redpath.models  # noqa: F401
 
 
@@ -27,6 +28,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = config
     app.state.engine = engine
     app.state.session_factory = session_factory
+    app.state.nmap_parser = None
+    app.include_router(session_router)
 
     @app.get("/api/v1/health", response_model=HealthResponse)
     def health() -> HealthResponse:
