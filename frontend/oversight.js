@@ -1,7 +1,8 @@
 const SAFE_AUDIT_KEYS = new Set([
-  "approval_id", "authorization_confirmed", "code", "content_hash", "expires_at",
-  "finding_count", "policy_code", "policy_decision_id", "proposal_id", "report_id",
-  "source_ids", "status", "target_id", "used_fallback",
+  "action_id", "approval_id", "authorization_confirmed", "cleanup_status", "code",
+  "content_hash", "exit_code", "expires_at", "finding_count", "policy_code",
+  "policy_decision_id", "proposal_id", "report_id", "source_ids", "status", "target_id",
+  "used_fallback",
 ]);
 const SESSION_STATES = new Set(["draft", "authorized", "ready", "running", "completed", "expired", "blocked"]);
 const ACTIONS = new Set(["inspect_http_headers", "inspect_tls_certificate", "check_tcp_connection"]);

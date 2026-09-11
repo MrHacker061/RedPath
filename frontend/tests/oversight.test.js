@@ -149,3 +149,38 @@ test("oversight renderer displays only normalized report and audit fields", () =
   assert.match(elements.approvals.children[0].textContent, /approved.*unused/i);
   assert.match(elements.events.children[0].textContent, /approval\.approved.*proposal-1/i);
 });
+
+test("action-completion audit rendering includes backend-safe result fields", () => {
+  const history = oversight.normalizeAuditHistory({
+    events: [{
+      id: "event-2",
+      session_id: "session-1",
+      event_type: "action.succeeded",
+      details: {
+        action_id: "action-1",
+        proposal_id: "proposal-1",
+        status: "succeeded",
+        exit_code: 0,
+        cleanup_status: "completed",
+        raw_output: "do-not-show",
+      },
+      created_at: "2030-01-01T00:03:00Z",
+    }],
+    truncated: false,
+  }, "session-1");
+  const elements = {
+    summary: new FakeNode(), overview: new FakeNode(), proposals: new FakeNode(),
+    approvals: new FakeNode(), audit: new FakeNode(), events: new FakeNode(),
+  };
+  oversight.renderSessionOversight(elements, {
+    sessionState: "completed",
+    evidence: { total: 1, observed: 1, inferred: 0, verified: 0 },
+    proposals: [], approvals: [], auditEventCount: 1, executionAuthorized: false,
+  }, history, fakeDocument);
+  const rendered = elements.events.children[0].textContent;
+  assert.match(rendered, /action\.succeeded/i);
+  assert.match(rendered, /action id: action-1/i);
+  assert.match(rendered, /exit code: 0/i);
+  assert.match(rendered, /cleanup status: completed/i);
+  assert.doesNotMatch(rendered, /do-not-show|raw output/i);
+});
