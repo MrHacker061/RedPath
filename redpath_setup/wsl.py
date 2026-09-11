@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import re
 import subprocess
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from threading import Event
@@ -36,8 +37,16 @@ class WslMarkerCheckError(WslSetupError):
     """The marker probe could not establish whether RedPath owns the distro."""
 
 
+class WslOperationCancelled(WslSetupError):
+    """A consented WSL setup operation was cancelled before completion."""
+
+
 class Runner(Protocol):
     def __call__(self, argv: Sequence[str], cwd: Path, timeout: float) -> ProcessResult: ...
+
+
+class CancellableRunner(Protocol):
+    def __call__(self, argv: Sequence[str], cwd: Path, timeout: float, cancelled: Event) -> ProcessResult: ...
 
 
 Progress = Callable[[int, int | None], None]
@@ -59,6 +68,47 @@ def _run(argv: Sequence[str], cwd: Path, timeout: float) -> ProcessResult:
         shell=False,
     )
     return ProcessResult(completed.returncode, completed.stdout, completed.stderr)
+
+
+def _stop(process: subprocess.Popen[str]) -> None:
+    process.terminate()
+    try:
+        process.wait(timeout=0.1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _run_cancellable(
+    argv: Sequence[str], cwd: Path, timeout: float, cancelled: Event
+) -> ProcessResult:
+    """Run a fixed WSL setup command with bounded termination on cancellation."""
+    deadline = time.monotonic() + timeout
+    process = subprocess.Popen(
+        list(argv), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", shell=False,
+    )
+    try:
+        while True:
+            if cancelled.is_set():
+                _stop(process)
+                raise WslOperationCancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _stop(process)
+                raise subprocess.TimeoutExpired(list(argv), timeout)
+            try:
+                stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                return ProcessResult(process.returncode, stdout or "", stderr or "")
+            except subprocess.TimeoutExpired:
+                continue
+    except BaseException:
+        if process.poll() is None:
+            _stop(process)
+        raise
 
 
 def _normalized_wsl_text(*values: str) -> str:
@@ -100,17 +150,33 @@ class WslSetup:
         destination: Path,
         *,
         runner: Runner = _run,
+        cancellable_runner: CancellableRunner | None = None,
         downloader: Downloader = download_verified,
     ) -> None:
         self.destination = Path(destination)
         self.runner = runner
+        self.cancellable_runner = cancellable_runner or (
+            _run_cancellable if runner is _run else self._adapt_runner(runner)
+        )
         self.downloader = downloader
 
     def _cwd(self) -> Path:
         return self.destination if self.destination.is_dir() else Path.cwd()
 
+    @staticmethod
+    def _adapt_runner(runner: Runner) -> CancellableRunner:
+        return lambda argv, cwd, timeout, _cancelled: runner(argv, cwd, timeout)
+
     def _invoke(self, argv: Sequence[str], timeout: float) -> ProcessResult:
         result = self.runner(tuple(argv), self._cwd(), timeout)
+        if not isinstance(result, ProcessResult):
+            raise WslSetupError("WSL runner returned an invalid result")
+        return result
+
+    def _invoke_cancellable(
+        self, argv: Sequence[str], timeout: float, cancelled: Event
+    ) -> ProcessResult:
+        result = self.cancellable_runner(tuple(argv), self._cwd(), timeout, cancelled)
         if not isinstance(result, ProcessResult):
             raise WslSetupError("WSL runner returned an invalid result")
         return result
@@ -147,31 +213,48 @@ class WslSetup:
     def _cancelled() -> SetupStage:
         return SetupStage("wsl", "needs_attention", "CANCELLED", "The Kali setup operation was cancelled.")
 
-    def inspect(self) -> SetupStage:
-        """Confirm WSL2 and the exact, marker-owned Kali distribution."""
+    def inspect_wsl(self) -> SetupStage:
+        """Confirm only Windows' WSL2 availability."""
         try:
             status = self._invoke(("wsl.exe", "--status"), STATUS_TIMEOUT_SECONDS)
         except (OSError, subprocess.TimeoutExpired, WslSetupError):
             return SetupStage("wsl", "needs_attention", "WSL_UNAVAILABLE", "WSL2 is unavailable.")
         if not _wsl2_available(status):
             return SetupStage("wsl", "needs_attention", "WSL2_REQUIRED", "WSL2 must be enabled before Kali can be used.")
+        return SetupStage("wsl", "ready", "WSL_READY", "WSL2 is ready.")
+
+    def inspect_kali(self) -> SetupStage:
+        """Confirm the exact, marker-owned RedPath Kali distribution."""
+        if self.inspect_wsl().status != "ready":
+            return SetupStage("kali", "needs_attention", "KALI_WSL_REQUIRED", "WSL2 must be ready before Kali can be used.")
         try:
             if not self._managed_distribution_exists():
-                return SetupStage("wsl", "needs_attention", "KALI_NOT_INSTALLED", "The managed Kali distribution is not installed.")
+                return SetupStage("kali", "needs_attention", "KALI_NOT_INSTALLED", "The managed Kali distribution is not installed.")
             if not self._has_managed_marker():
-                return SetupStage("wsl", "failed", "KALI_IDENTITY_MISMATCH", "The existing Kali distribution is not managed by RedPath.")
+                return SetupStage("kali", "failed", "KALI_IDENTITY_MISMATCH", "The existing Kali distribution is not managed by RedPath.")
         except WslMarkerCheckError:
-            return SetupStage("wsl", "failed", "KALI_MARKER_CHECK_FAILED", "The managed Kali ownership marker could not be checked.")
+            return SetupStage("kali", "failed", "KALI_MARKER_CHECK_FAILED", "The managed Kali ownership marker could not be checked.")
         except (OSError, subprocess.TimeoutExpired, WslSetupError):
-            return SetupStage("wsl", "needs_attention", "WSL_UNAVAILABLE", "WSL2 is unavailable.")
-        return SetupStage("wsl", "ready", "KALI_READY", "The managed Kali distribution is ready.")
+            return SetupStage("kali", "needs_attention", "KALI_WSL_REQUIRED", "WSL2 is unavailable.")
+        return SetupStage("kali", "ready", "KALI_READY", "The managed Kali distribution is ready.")
 
-    def enable(self, consent: bool) -> SetupStage:
+    def inspect(self) -> SetupStage:
+        """Compatibility alias for callers that need Kali readiness."""
+        return self.inspect_kali()
+
+    def enable(self, consent: bool, cancelled: Event | None = None) -> SetupStage:
         """Request WSL2 setup only after an explicit user consent receipt."""
         if consent is not True:
             return self._consent_required()
+        cancelled = cancelled or Event()
+        if cancelled.is_set():
+            return self._cancelled()
         try:
-            result = self._invoke(("wsl.exe", "--install", "--no-distribution"), ENABLE_TIMEOUT_SECONDS)
+            result = self._invoke_cancellable(
+                ("wsl.exe", "--install", "--no-distribution"), ENABLE_TIMEOUT_SECONDS, cancelled
+            )
+        except WslOperationCancelled:
+            return self._cancelled()
         except (OSError, subprocess.TimeoutExpired, WslSetupError):
             return SetupStage("wsl", "failed", "WSL_ENABLE_FAILED", "Windows could not start WSL2 setup.")
         if result.returncode == 3010:
@@ -180,7 +263,7 @@ class WslSetup:
             return SetupStage("wsl", "failed", "WSL_ENABLE_FAILED", "Windows could not enable WSL2.")
         if _restart_pending(result):
             return SetupStage("wsl", "needs_attention", "RESTART_REQUIRED", "Restart Windows, then return to RedPath setup.")
-        return self.inspect()
+        return self.inspect_wsl()
 
     def install_kali(self, consent: bool, progress: Progress, cancelled: Event) -> SetupStage:
         """Import the verified Kali artifact and write RedPath's fixed marker."""
@@ -189,7 +272,7 @@ class WslSetup:
         if cancelled.is_set():
             return self._cancelled()
 
-        initial = self.inspect()
+        initial = self.inspect_kali()
         if initial.code != "KALI_NOT_INSTALLED":
             return initial
 
@@ -208,13 +291,16 @@ class WslSetup:
             return SetupStage("wsl", "failed", "KALI_ARTIFACT_INVALID", "The verified Kali artifact is unavailable.")
 
         try:
-            imported = self._invoke(
+            imported = self._invoke_cancellable(
                 (
                     "wsl.exe", "--import", DISTRIBUTION_NAME, str(self.destination / DISTRIBUTION_NAME),
                     str(expected_file), "--version", "2",
                 ),
                 IMPORT_TIMEOUT_SECONDS,
+                cancelled,
             )
+        except WslOperationCancelled:
+            return self._cancelled()
         except (OSError, subprocess.TimeoutExpired, WslSetupError):
             return SetupStage("wsl", "failed", "KALI_IMPORT_FAILED", "The managed Kali distribution could not be imported.")
         if imported.returncode != 0:
@@ -242,7 +328,7 @@ class WslSetup:
             timeout_valid = False
         if not timeout_valid:
             raise WslSetupError("Kali timeout must be finite, greater than 0 and at most 60 seconds")
-        stage = self.inspect()
+        stage = self.inspect_kali()
         if stage.code != "KALI_READY":
             raise WslSetupError("managed Kali distribution is not ready")
         return self._invoke(("wsl.exe", "--distribution", DISTRIBUTION_NAME, "--exec", *argv), float(timeout))

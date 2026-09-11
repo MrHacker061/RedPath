@@ -16,6 +16,12 @@ class FakeOllamaSetup:
     def inspect(self) -> SetupStage:
         return SetupStage("ollama", "ready", "OK", "Local Ollama is ready.")
 
+    def inspect_service(self) -> SetupStage:
+        return SetupStage("ollama", "ready", "OLLAMA_READY", "Local Ollama is ready.")
+
+    def inspect_model(self) -> SetupStage:
+        return SetupStage("model", "needs_attention", "MODEL_MISSING", "Pinned model is missing.")
+
     def install(self, consent: bool, _progress, cancelled: Event) -> SetupStage:
         self.installs.append((consent, cancelled))
         return SetupStage("ollama", "ready", "OK", "Local Ollama is ready.")
@@ -33,8 +39,15 @@ class FakeWslSetup:
     def inspect(self) -> SetupStage:
         return SetupStage("wsl", "ready", "KALI_READY", "Managed Kali is ready.")
 
-    def enable(self, consent: bool) -> SetupStage:
+    def inspect_wsl(self) -> SetupStage:
+        return SetupStage("wsl", "ready", "WSL_READY", "WSL2 is ready.")
+
+    def inspect_kali(self) -> SetupStage:
+        return SetupStage("kali", "needs_attention", "KALI_NOT_INSTALLED", "Managed Kali is missing.")
+
+    def enable(self, consent: bool, cancelled: Event) -> SetupStage:
         self.enables.append(consent)
+        assert not cancelled.is_set()
         return SetupStage("wsl", "ready", "KALI_READY", "WSL2 is ready.")
 
     def install_kali(self, consent: bool, _progress, cancelled: Event) -> SetupStage:
@@ -61,6 +74,10 @@ def test_setup_returns_only_fixed_component_states(client):
 
     assert response.status_code == 200
     assert set(response.json()["components"]) == {"ollama", "model", "wsl", "kali"}
+    assert response.json()["components"]["ollama"]["code"] == "OLLAMA_READY"
+    assert response.json()["components"]["model"]["code"] == "MODEL_MISSING"
+    assert response.json()["components"]["wsl"]["code"] == "WSL_READY"
+    assert response.json()["components"]["kali"]["code"] == "KALI_NOT_INSTALLED"
 
 
 def test_setup_repair_requires_exact_consent_for_fixed_component(client, app):
@@ -70,6 +87,14 @@ def test_setup_repair_requires_exact_consent_for_fixed_component(client, app):
     assert app.state.ollama_setup.pulls[0][0] is True
     for body in ({}, {"consent": False}, {"consent": 1}, {"consent": True, "extra": "no"}):
         assert client.post("/api/v1/setup/model/repair", json=body).status_code == 422
+
+
+def test_setup_repair_routes_wsl_and_kali_to_their_independent_services(client, app):
+    assert client.post("/api/v1/setup/wsl/repair", json={"consent": True}).status_code == 200
+    assert client.post("/api/v1/setup/kali/repair", json={"consent": True}).status_code == 200
+
+    assert app.state.wsl_setup.enables == [True]
+    assert len(app.state.wsl_setup.installs) == 1
 
 
 def test_setup_repair_rejects_unknown_component(client):
@@ -82,25 +107,47 @@ def test_setup_cancel_only_targets_fixed_component_event(client, app):
     response = client.post("/api/v1/setup/kali/cancel")
 
     assert response.status_code == 200
-    assert app.state.setup_cancellations["kali"].is_set()
-    assert not app.state.setup_cancellations["ollama"].is_set()
+    assert response.json()["code"] == "NO_ACTIVE_OPERATION"
     assert client.post("/api/v1/setup/shell/cancel").status_code == 404
     assert client.post("/api/v1/setup/kali/cancel", json={"component": "shell"}).status_code == 422
 
 
-def test_setup_repair_fails_closed_while_another_local_operation_holds_lock(client, app):
-    assert app.state.setup_lock.acquire(blocking=False)
-    try:
-        response = client.post("/api/v1/setup/ollama/repair", json={"consent": True})
-    finally:
-        app.state.setup_lock.release()
+def test_setup_operation_controller_binds_cancellation_to_only_the_active_event():
+    from redpath.setup_api import SetupOperationController
 
-    assert response.status_code == 409
-    assert app.state.ollama_setup.installs == []
+    controller = SetupOperationController()
+    first = controller.begin("ollama")
+    assert first is not None
+    assert controller.cancel("model") is False
+    assert controller.cancel("ollama") is True
+    assert first.is_set()
+    controller.finish("ollama", first)
+
+    second = controller.begin("ollama")
+    assert second is not None
+    assert second is not first
+    assert not second.is_set()
+    controller.finish("ollama", first)
+    assert controller.cancel("ollama") is True
+    assert second.is_set()
+    controller.finish("ollama", second)
+
+
+def test_cancel_route_sets_only_the_current_active_event(client, app):
+    active = app.state.setup_operations.begin("model")
+    assert active is not None
+    try:
+        response = client.post("/api/v1/setup/model/cancel")
+    finally:
+        app.state.setup_operations.finish("model", active)
+
+    assert response.status_code == 200
+    assert response.json()["code"] == "CANCEL_REQUESTED"
+    assert active.is_set()
 
 
 def test_diagnostics_exclude_raw_component_output(client, app):
-    app.state.ollama_setup.inspect = lambda: SetupStage(
+    app.state.ollama_setup.inspect_service = lambda: SetupStage(
         "ollama", "failed", "OLLAMA_UNAVAILABLE", "SECRET_INSTALLER_OUTPUT"
     )
 
@@ -110,3 +157,15 @@ def test_diagnostics_exclude_raw_component_output(client, app):
     assert set(payload["components"]) == {"ollama", "model", "wsl", "kali"}
     assert "SECRET_INSTALLER_OUTPUT" not in str(payload)
     assert "output" not in str(payload).lower()
+
+
+def test_diagnostics_maps_unknown_component_codes_to_a_stable_generic_code(client, app):
+    app.state.ollama_setup.inspect_service = lambda: SetupStage(
+        "ollama", "failed", "UNTRUSTED_SECRET_CODE", "SECRET_COMPONENT_TEXT"
+    )
+
+    payload = client.get("/api/v1/diagnostics").json()
+
+    assert payload["components"]["ollama"]["code"] == "COMPONENT_STATUS_UNAVAILABLE"
+    assert "UNTRUSTED_SECRET_CODE" not in str(payload)
+    assert "SECRET_COMPONENT_TEXT" not in str(payload)

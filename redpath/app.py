@@ -1,7 +1,6 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from threading import Event, Lock
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -18,7 +17,7 @@ from redpath.nmap_parser import parse_nmap_xml_bytes
 from redpath.runtime import AppPaths
 from redpath.approval_api import router as approval_router
 from redpath.session_api import router as session_router
-from redpath.setup_api import router as setup_router
+from redpath.setup_api import SetupOperationController, router as setup_router
 from redpath.stop_api import router as stop_router
 from redpath_ai import RuleBasedProvider
 from redpath_kali.wsl_actions import WSLActionDispatcher
@@ -55,10 +54,7 @@ def create_app(
     app.state.ollama_setup = OllamaSetup(app_paths.download_dir)
     app.state.wsl_setup = WslSetup(app_paths.wsl_dir)
     app.state.action_dispatcher = WSLActionDispatcher(app.state.wsl_setup)
-    app.state.setup_lock = Lock()
-    app.state.setup_cancellations = {
-        "ollama": Event(), "model": Event(), "wsl": Event(), "kali": Event(),
-    }
+    app.state.setup_operations = SetupOperationController()
     def parse_import(xml_text: str, session_id: str, target_id: str, scan_import_id: str, target_address: str):
         result = parse_nmap_xml_bytes(
             xml_text.encode("utf-8"), scan_id=scan_import_id,

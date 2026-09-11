@@ -1,4 +1,5 @@
 import subprocess
+import shlex
 
 import pytest
 
@@ -27,10 +28,49 @@ def test_wsl_dispatcher_builds_fixed_http_command():
         authorized_target_id="t1", authorized_target_address="192.168.56.20",
     )
 
-    assert runner.arguments == ["curl", "--head", "--max-time", "10", "http://192.168.56.20:80/"]
+    assert runner.arguments == [
+        "timeout", "--signal=KILL", "10s", "curl", "--head", "--silent",
+        "--show-error", "--max-time", "8", "--connect-timeout", "5",
+        "--proto", "=http", "--", "http://192.168.56.20:80/",
+    ]
     assert runner.timeout == 15
     assert result.action_name == "inspect_http_headers"
     assert result.status.value == "succeeded"
+
+
+@pytest.mark.parametrize(
+    ("action_name", "arguments", "address", "expected_argv", "expected_timeout"),
+    [
+        (
+            "check_tcp_connection", {"target_id": "t1", "port": 22, "timeout_seconds": 3}, "192.168.56.20",
+            ["timeout", "--signal=KILL", "3s", "nc", "-vz", "-w", "3", "192.168.56.20", "22"], 8,
+        ),
+        (
+            "inspect_http_headers", {"target_id": "t1", "port": 8080}, "fd00::20",
+            ["timeout", "--signal=KILL", "10s", "curl", "--head", "--silent", "--show-error", "--max-time", "8", "--connect-timeout", "5", "--proto", "=http", "--", "http://[fd00::20]:8080/"], 15,
+        ),
+        (
+            "inspect_tls_certificate", {"target_id": "t1", "port": 443}, "fd00::20",
+            ["timeout", "--signal=KILL", "10s", "openssl", "s_client", "-brief", "-connect", "[fd00::20]:443"], 15,
+        ),
+    ],
+)
+def test_wsl_dispatcher_uses_the_same_canonical_guest_argv_as_ssh_transport(
+    action_name, arguments, address, expected_argv, expected_timeout
+):
+    from redpath_kali.action_specs import render_fixed_action
+    from redpath_kali.wsl_actions import WSLActionDispatcher
+
+    runner = RecordingWslRunner()
+    WSLActionDispatcher(runner).dispatch(
+        action_name, arguments, authorized_target_id="t1", authorized_target_address=address
+    )
+
+    spec = render_fixed_action(action_name, arguments, "t1", address)
+    assert list(spec.guest_argv) == expected_argv
+    assert runner.arguments == expected_argv
+    assert runner.timeout == expected_timeout
+    assert spec.remote_command == shlex.join(expected_argv)
 
 
 @pytest.mark.parametrize(

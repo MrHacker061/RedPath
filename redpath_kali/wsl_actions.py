@@ -7,32 +7,21 @@ from typing import Protocol, Sequence
 
 from redpath_setup.wsl import WslSetupError
 
+from .action_specs import (
+    FixedActionSpec,
+    KaliActionError,
+    render_fixed_action,
+)
 from .actions import (
     ActionResult,
     ActionStatus,
-    KaliActionError,
-    _ActionInvocation,
     _bounded,
-    _validate_invocation,
 )
 from .vm import ProcessResult
 
 
 class WslRunner(Protocol):
     def run_in_kali(self, arguments: Sequence[str], timeout: float) -> ProcessResult: ...
-
-
-def _fixed_argv(invocation: _ActionInvocation) -> tuple[str, ...]:
-    address = invocation.target_address
-    endpoint = f"[{address}]" if ":" in address else address
-    if invocation.name == "check_tcp_connection":
-        timeout = invocation.process_timeout - 5
-        return ("nc", "-vz", "-w", str(timeout), address, str(invocation.port))
-    if invocation.name == "inspect_http_headers":
-        return ("curl", "--head", "--max-time", "10", f"http://{endpoint}:{invocation.port}/")
-    if invocation.name == "inspect_tls_certificate":
-        return ("openssl", "s_client", "-brief", "-connect", f"{endpoint}:{invocation.port}")
-    raise KaliActionError("unknown fixed Kali action")
 
 
 class WSLActionDispatcher:
@@ -49,12 +38,12 @@ class WSLActionDispatcher:
         authorized_target_id: str,
         authorized_target_address: str,
     ) -> ActionResult:
-        invocation = _validate_invocation(
+        invocation = render_fixed_action(
             action_name, arguments, authorized_target_id, authorized_target_address
         )
         try:
             completed = self._setup.run_in_kali(
-                _fixed_argv(invocation), float(invocation.process_timeout)
+                invocation.guest_argv, float(invocation.process_timeout)
             )
         except subprocess.TimeoutExpired as exc:
             return self._result(
@@ -82,7 +71,7 @@ class WSLActionDispatcher:
 
     @staticmethod
     def _result(
-        invocation: _ActionInvocation,
+        invocation: FixedActionSpec,
         status: ActionStatus,
         *,
         exit_code: int | None = None,

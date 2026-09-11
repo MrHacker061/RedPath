@@ -19,6 +19,44 @@ from redpath_setup.state import SetupStage
 router = APIRouter(prefix="/api/v1", tags=["setup"])
 COMPONENTS = ("ollama", "model", "wsl", "kali")
 ComponentName = Literal["ollama", "model", "wsl", "kali"]
+_DIAGNOSTIC_CODES = frozenset({
+    "OLLAMA_READY", "MODEL_READY", "MODEL_MISSING", "OLLAMA_UNAVAILABLE",
+    "WSL_READY", "WSL2_REQUIRED", "WSL_UNAVAILABLE", "KALI_WSL_REQUIRED",
+    "KALI_NOT_INSTALLED", "KALI_IDENTITY_MISMATCH", "KALI_MARKER_CHECK_FAILED",
+    "KALI_READY", "OLLAMA_STATUS_UNAVAILABLE", "WSL_STATUS_UNAVAILABLE",
+    "SETUP_STATUS_UNAVAILABLE",
+})
+
+
+class SetupOperationController:
+    """Own one active setup event so cancellation cannot leak into a later repair."""
+
+    def __init__(self) -> None:
+        self._operation_lock = Lock()
+        self._state_lock = Lock()
+        self._active: tuple[ComponentName, Event] | None = None
+
+    def begin(self, component: ComponentName) -> Event | None:
+        if not self._operation_lock.acquire(blocking=False):
+            return None
+        event = Event()
+        with self._state_lock:
+            self._active = (component, event)
+        return event
+
+    def finish(self, component: ComponentName, event: Event) -> None:
+        with self._state_lock:
+            if self._active != (component, event):
+                return
+            self._active = None
+            self._operation_lock.release()
+
+    def cancel(self, component: ComponentName) -> bool:
+        with self._state_lock:
+            if self._active is None or self._active[0] != component:
+                return False
+            self._active[1].set()
+            return True
 
 
 def _failed(component: str, code: str = "SETUP_OPERATION_FAILED") -> SetupStage:
@@ -35,18 +73,26 @@ def _component_stages(request: Request) -> dict[ComponentName, SetupComponentSta
     ollama = getattr(request.app.state, "ollama_setup", None)
     wsl = getattr(request.app.state, "wsl_setup", None)
     try:
-        ollama_stage = ollama.inspect()
+        ollama_stage = ollama.inspect_service()
     except Exception:
         ollama_stage = _failed("ollama", "OLLAMA_STATUS_UNAVAILABLE")
     try:
-        wsl_stage = wsl.inspect()
+        model_stage = ollama.inspect_model()
+    except Exception:
+        model_stage = _failed("model", "OLLAMA_STATUS_UNAVAILABLE")
+    try:
+        wsl_stage = wsl.inspect_wsl()
     except Exception:
         wsl_stage = _failed("wsl", "WSL_STATUS_UNAVAILABLE")
+    try:
+        kali_stage = wsl.inspect_kali()
+    except Exception:
+        kali_stage = _failed("kali", "WSL_STATUS_UNAVAILABLE")
     return {
         "ollama": _as_status("ollama", ollama_stage),
-        "model": _as_status("model", ollama_stage),
+        "model": _as_status("model", model_stage),
         "wsl": _as_status("wsl", wsl_stage),
-        "kali": _as_status("kali", wsl_stage),
+        "kali": _as_status("kali", kali_stage),
     }
 
 
@@ -56,13 +102,11 @@ def _component_or_404(component: str) -> ComponentName:
     return component  # type: ignore[return-value]
 
 
-def _cancellations(request: Request) -> dict[ComponentName, Event]:
-    events = getattr(request.app.state, "setup_cancellations", None)
-    if not isinstance(events, dict) or set(events) != set(COMPONENTS):
+def _operations(request: Request) -> SetupOperationController:
+    operations = getattr(request.app.state, "setup_operations", None)
+    if not isinstance(operations, SetupOperationController):
         raise HTTPException(status_code=503, detail="Setup controls are unavailable")
-    if not all(isinstance(event, Event) for event in events.values()):
-        raise HTTPException(status_code=503, detail="Setup controls are unavailable")
-    return events
+    return operations
 
 
 def _progress(_completed: int, _total: int | None) -> None:
@@ -70,25 +114,22 @@ def _progress(_completed: int, _total: int | None) -> None:
 
 
 def _repair(request: Request, component: ComponentName, consent: bool) -> SetupStage:
-    lock = getattr(request.app.state, "setup_lock", None)
-    if lock is None or not hasattr(lock, "acquire") or not hasattr(lock, "release"):
-        raise HTTPException(status_code=503, detail="Setup controls are unavailable")
-    if not lock.acquire(blocking=False):
+    operations = _operations(request)
+    cancelled = operations.begin(component)
+    if cancelled is None:
         raise HTTPException(status_code=409, detail="Another setup operation is in progress")
     try:
-        cancelled = _cancellations(request)[component]
-        cancelled.clear()
         if component == "ollama":
             return request.app.state.ollama_setup.install(consent, _progress, cancelled)
         if component == "model":
             return request.app.state.ollama_setup.pull_model(consent, _progress, cancelled)
         if component == "wsl":
-            return request.app.state.wsl_setup.enable(consent)
+            return request.app.state.wsl_setup.enable(consent, cancelled)
         return request.app.state.wsl_setup.install_kali(consent, _progress, cancelled)
     except Exception:
         return _failed(component)
     finally:
-        lock.release()
+        operations.finish(component, cancelled)
 
 
 @router.get("/setup", response_model=SetupResponse)
@@ -101,9 +142,12 @@ def diagnostics(request: Request) -> DiagnosticsResponse:
     components = _component_stages(request)
     return DiagnosticsResponse(
         version=__version__,
-        components={name: {"status": value.status, "code": value.code} for name, value in components.items()},
+        components={
+            name: {"status": value.status, "code": value.code if value.code in _DIAGNOSTIC_CODES else "COMPONENT_STATUS_UNAVAILABLE"}
+            for name, value in components.items()
+        },
         data_path=str(request.app.state.paths.data_dir),
-        codes=tuple(value.code for value in components.values()),
+        codes=tuple(value.code if value.code in _DIAGNOSTIC_CODES else "COMPONENT_STATUS_UNAVAILABLE" for value in components.values()),
     )
 
 
@@ -121,7 +165,10 @@ def cancel_setup(
 ) -> SetupComponentStatus:
     del payload
     fixed_component = _component_or_404(component)
-    _cancellations(request)[fixed_component].set()
+    if not _operations(request).cancel(fixed_component):
+        return SetupComponentStatus(
+            status="needs_attention", code="NO_ACTIVE_OPERATION", detail="No matching setup operation is active."
+        )
     return SetupComponentStatus(
         status="in_progress", code="CANCEL_REQUESTED", detail="Cancellation was requested."
     )

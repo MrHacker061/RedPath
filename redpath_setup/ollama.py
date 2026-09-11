@@ -156,13 +156,23 @@ class OllamaSetup:
         self.downloader = downloader
         self.provider = provider or OllamaProvider(model=OLLAMA_MODEL)
 
-    def inspect(self) -> SetupStage:
+    def inspect_service(self) -> SetupStage:
+        health = self.provider.health()
+        if health.detail == "local Ollama endpoint is unavailable":
+            return SetupStage("ollama", "needs_attention", "OLLAMA_UNAVAILABLE", "The local Ollama service is unavailable.")
+        return SetupStage("ollama", "ready", "OLLAMA_READY", "The local Ollama service is ready.")
+
+    def inspect_model(self) -> SetupStage:
         health = self.provider.health()
         if health.available:
-            return SetupStage("ollama", "ready", "OK", "Pinned local model is ready.")
+            return SetupStage("model", "ready", "MODEL_READY", "The pinned local model is ready.")
         if health.detail == "configured model is not installed":
-            return SetupStage("ollama", "needs_attention", "MODEL_MISSING", "The configured local model is not installed.")
-        return SetupStage("ollama", "needs_attention", "OLLAMA_UNAVAILABLE", "The local Ollama service is unavailable.")
+            return SetupStage("model", "needs_attention", "MODEL_MISSING", "The configured local model is not installed.")
+        return SetupStage("model", "needs_attention", "OLLAMA_UNAVAILABLE", "The local Ollama service is unavailable.")
+
+    def inspect(self) -> SetupStage:
+        """Compatibility alias for callers that need model readiness."""
+        return self.inspect_model()
 
     def install(self, consent: bool, progress: Progress, cancelled: Event) -> SetupStage:
         if not consent:
