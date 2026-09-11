@@ -24,3 +24,15 @@ test("each service has one labeled health card", () => {
 test("page includes a keyboard skip link", () => {
   assert.match(html, /<a class="skip-link" href="#main-content">/);
 });
+
+test("session form separates lesson URL from authorized target", () => {
+  assert.match(html, /name="lesson_url"/);
+  assert.match(html, /name="target"/);
+  assert.match(html, /name="authorization_confirmed"/);
+});
+
+test("evidence workspace accepts XML and labels evidence states", () => {
+  assert.match(html, /accept="\.xml,application\/xml,text\/xml"/);
+  assert.match(html, /Observed scan facts, AI inferences, and verified results/);
+  assert.match(html, /id="findings-body"/);
+});
