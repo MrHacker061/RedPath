@@ -8,6 +8,11 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field
 
 from redpath.contracts import AIProposal, StrictModel
+from redpath_ai.schemas import (
+    ActionArgumentConstraint,
+    ActionDefinition,
+    ArgumentKind,
+)
 
 
 class ActionArguments(StrictModel):
@@ -35,6 +40,41 @@ ACTION_ARGUMENT_MODELS = {
     "inspect_tls_certificate": TlsCertificateArguments,
     "check_tcp_connection": TcpConnectionArguments,
 }
+
+
+RECOMMENDATION_ACTIONS = (
+    ActionDefinition(
+        name="inspect_http_headers",
+        description="Read HTTP response headers through the fixed inspection adapter.",
+        argument_constraints=(
+            ActionArgumentConstraint(name="target_id", kind=ArgumentKind.TARGET_ID),
+            ActionArgumentConstraint(name="port", kind=ArgumentKind.PORT),
+        ),
+    ),
+    ActionDefinition(
+        name="inspect_tls_certificate",
+        description="Read TLS certificate metadata through the fixed inspection adapter.",
+        argument_constraints=(
+            ActionArgumentConstraint(name="target_id", kind=ArgumentKind.TARGET_ID),
+            ActionArgumentConstraint(name="port", kind=ArgumentKind.PORT),
+        ),
+    ),
+    ActionDefinition(
+        name="check_tcp_connection",
+        description="Attempt a bounded TCP connection through the fixed connectivity adapter.",
+        argument_constraints=(
+            ActionArgumentConstraint(name="target_id", kind=ArgumentKind.TARGET_ID),
+            ActionArgumentConstraint(name="port", kind=ArgumentKind.PORT),
+            ActionArgumentConstraint(
+                name="timeout_seconds",
+                kind=ArgumentKind.INTEGER,
+                required=False,
+                minimum=1,
+                maximum=10,
+            ),
+        ),
+    ),
+)
 
 
 class ValidatedProposal(StrictModel):

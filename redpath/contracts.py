@@ -59,6 +59,24 @@ class PolicyDecisionContract(StrictModel):
     reason: str
 
 
+class RecommendationProposalContract(AIProposal):
+    id: str
+    session_id: str
+
+
+class RecommendationPolicyDecisionContract(StrictModel):
+    id: str
+    proposal_id: str
+    allowed: bool
+    code: str
+    explanation: str
+
+
+class RecommendationResponse(StrictModel):
+    proposal: RecommendationProposalContract
+    policy_decision: RecommendationPolicyDecisionContract
+
+
 class ActionResultContract(StrictModel):
     action_id: str
     status: Literal["completed", "failed", "timed_out", "cancelled"]

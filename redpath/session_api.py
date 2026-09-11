@@ -12,12 +12,21 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from redpath.action_registry import (
+    RECOMMENDATION_ACTIONS,
+    ValidatedProposal,
+    validate_untrusted_proposal,
+)
 from redpath.contracts import (
+    AIProposal,
     AuthorizedTargetContract,
     AuthorizedTargetCreate,
     LessonSourceContract,
     LessonSourceCreate,
     NormalizedFinding,
+    RecommendationPolicyDecisionContract,
+    RecommendationProposalContract,
+    RecommendationResponse,
     ScanImportContract,
     ScanImportRequest,
     ScanImportResponse,
@@ -26,12 +35,26 @@ from redpath.contracts import (
     SessionState,
     SessionSummary,
 )
-from redpath.models import AuditEvent, AuthorizedTarget, Finding, LabSession, LessonSource, ScanImport
-from redpath_ai import LearningResponse, explain_findings
+from redpath.models import (
+    AuditEvent,
+    AuthorizedTarget,
+    Finding,
+    LabSession,
+    LessonSource,
+    PolicyDecision,
+    Proposal,
+    ScanImport,
+)
+from redpath_ai import LearningResponse, RuleBasedProvider, explain_findings
 from redpath_ai.schemas import EvidenceState as AIEvidenceState, Finding as AIFinding
+from redpath_ai.schemas import ProposedStep, RecommendationContext
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 Parser = Callable[[str, str, str, str, str], list[dict[str, Any]]]
+POLICY_VALIDATED_REQUIRES_APPROVAL = "POLICY_VALIDATED_REQUIRES_APPROVAL"
+PROVIDER_OUTPUT_REJECTED = "PROVIDER_OUTPUT_REJECTED"
+NO_SAFE_ACTION_RECOMMENDATION = "NO_SAFE_ACTION_RECOMMENDATION"
+ACTIVE_AUTHORIZED_TARGET_REQUIRED = "ACTIVE_AUTHORIZED_TARGET_REQUIRED"
 
 
 def get_db(request: Request):
@@ -228,3 +251,172 @@ def explain_session_findings(session_id: str, db: Session = Depends(get_db)) -> 
     audit(db, item.id, "learning.explanation.generated", finding_count=len(findings), source_ids=sorted({source for explanation in response.explanations for source in explanation.source_ids}))
     db.commit()
     return response
+
+
+def recommendation_context(
+    item: LabSession,
+    target: AuthorizedTarget,
+    findings: list[Finding],
+) -> RecommendationContext:
+    return RecommendationContext(
+        session_id=item.id,
+        target_id=target.id,
+        lesson_objective="Choose a safe, evidence-supported next learning action.",
+        findings=tuple(
+            AIFinding(
+                id=value.id,
+                session_id=value.session_id,
+                target_id=value.target_id,
+                state=AIEvidenceState(value.state),
+                category=value.category,
+                protocol=value.protocol,
+                port=value.port,
+                service_hint=value.service_hint,
+                evidence_source=value.evidence_ref,
+            )
+            for value in findings
+        ),
+        allowed_actions=RECOMMENDATION_ACTIONS,
+    )
+
+
+def validate_provider_recommendation(
+    step: Any, context: RecommendationContext
+) -> ValidatedProposal:
+    untrusted_step = ProposedStep.model_validate(step)
+    canonical = untrusted_step.to_canonical_proposal(context)
+    wire_proposal = AIProposal.model_validate(canonical.model_dump())
+    return validate_untrusted_proposal(
+        wire_proposal,
+        authorized_target_id=context.target_id,
+        available_finding_ids={finding.id for finding in context.findings},
+    )
+
+
+@router.post(
+    "/{session_id}/recommendation",
+    response_model=RecommendationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def recommend_session_action(
+    session_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> RecommendationResponse:
+    item = active_session(db, session_id)
+    target = db.scalar(
+        select(AuthorizedTarget).where(AuthorizedTarget.session_id == item.id)
+    )
+    target_is_private = False
+    if target is not None:
+        try:
+            validate_private_target(target.address)
+            target_is_private = True
+        except HTTPException:
+            pass
+    if (
+        not item.authorization_confirmed
+        or target is None
+        or target.locked
+        or utc(target.expires_at) <= datetime.now(timezone.utc)
+        or not target_is_private
+    ):
+        audit(
+            db,
+            item.id,
+            "recommendation.rejected",
+            code=ACTIVE_AUTHORIZED_TARGET_REQUIRED,
+        )
+        db.commit()
+        raise HTTPException(status_code=409, detail="An active authorized target is required")
+
+    stored = db.scalars(
+        select(Finding)
+        .where(Finding.session_id == item.id, Finding.target_id == target.id)
+        .order_by(Finding.created_at, Finding.id)
+    ).all()
+    context = recommendation_context(item, target, list(stored))
+    provider = request.app.state.llm_provider
+    used_fallback = False
+    try:
+        step = provider.recommend_next_step(context)
+        validated = validate_provider_recommendation(step, context)
+    except Exception:
+        # Provider output is an untrusted boundary. Record only a stable code,
+        # then retry through the deterministic local provider.
+        used_fallback = True
+        audit(
+            db,
+            item.id,
+            "recommendation.provider.fallback",
+            code=PROVIDER_OUTPUT_REJECTED,
+        )
+        try:
+            fallback_step = RuleBasedProvider().recommend_next_step(context)
+            validated = validate_provider_recommendation(fallback_step, context)
+        except Exception:
+            # A broken fallback must stop at proposal generation, never advance
+            # into persistence or any execution path.
+            audit(
+                db,
+                item.id,
+                "recommendation.rejected",
+                code=NO_SAFE_ACTION_RECOMMENDATION,
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=409,
+                detail="No safe action recommendation is available",
+            ) from None
+
+    proposal = Proposal(
+        session_id=item.id,
+        action_name=validated.action_name,
+        arguments_json=json.dumps(validated.arguments, sort_keys=True),
+        finding_ids_json=json.dumps(list(validated.finding_ids)),
+        reason=validated.reason,
+        learning_goal=validated.learning_goal,
+        requires_approval=True,
+    )
+    db.add(proposal)
+    db.flush()
+    explanation = (
+        "The proposal is session-bound and allowlisted; explicit approval is still required."
+    )
+    decision = PolicyDecision(
+        proposal_id=proposal.id,
+        allowed=True,
+        code=POLICY_VALIDATED_REQUIRES_APPROVAL,
+        reason=explanation,
+    )
+    db.add(decision)
+    db.flush()
+    audit(
+        db,
+        item.id,
+        "recommendation.proposal.created",
+        proposal_id=proposal.id,
+        policy_decision_id=decision.id,
+        policy_code=decision.code,
+        used_fallback=used_fallback,
+    )
+    db.commit()
+    return RecommendationResponse(
+        proposal=RecommendationProposalContract(
+            id=proposal.id,
+            session_id=item.id,
+            finding_ids=list(validated.finding_ids),
+            action_name=validated.action_name,
+            arguments=validated.arguments,
+            reason=validated.reason,
+            learning_goal=validated.learning_goal,
+            requires_approval=True,
+        ),
+        policy_decision=RecommendationPolicyDecisionContract(
+            id=decision.id,
+            proposal_id=proposal.id,
+            allowed=decision.allowed,
+            code=decision.code,
+            explanation=decision.reason,
+        ),
+    )
