@@ -52,8 +52,13 @@ checksum, or byte size, and it does not provide a separate Retry or View
 Details control. Do not infer those details from a component card.
 
 You can still review imported evidence when the model or managed Kali component
-needs attention. Recommendations or action execution remain unavailable until
-their required component is healthy.
+needs attention. However, the current MVP does not use setup health as a
+recommendation or execution gate: `create_app()` selects `RuleBasedProvider`,
+so recommendations are deterministic and independent of model health, and run
+controls check only an exact approval plus a clear emergency stop. This differs
+from the intended model-backed, health-gated workflow and is a release blocker.
+Do not treat a Ready component card as proof that recommendation or execution
+is health-gated.
 
 ## Use the guided lab workflow
 

@@ -5,9 +5,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from redpath.app import create_app
 from redpath.config import Settings
+from redpath.models import Action
 from redpath.runtime import AppPaths
 from redpath_ai import RuleBasedProvider
 from redpath_kali.vm import ProcessResult
@@ -70,13 +74,7 @@ def desktop_client(tmp_path, monkeypatch):
         yield client, app.state.wsl_setup
 
 
-def test_complete_authorized_workflow(desktop_client):
-    client, fake_wsl = desktop_client
-    setup = client.get('/api/v1/setup')
-    assert setup.status_code == 200
-    assert all(stage['status'] == 'ready' for stage in setup.json()['components'].values())
-    assert client.get('/').status_code == 200
-    assert client.get('/api/v1/health').json()['database'] == 'ok'
+def create_approved_tcp_proposal(client, fake_wsl):
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     session = client.post('/api/v1/sessions', json={
         'authorization_confirmed': True, 'expires_at': future,
@@ -113,6 +111,18 @@ def test_complete_authorized_workflow(desktop_client):
     approval_body = approval.json()
     assert approval_body['proposal_id'] == proposal['id']
     assert approval_body['approval_id']
+    return route, target.json(), recommendation.json(), proposal, approval_body
+
+
+def test_complete_authorized_workflow(desktop_client):
+    client, fake_wsl = desktop_client
+    setup = client.get('/api/v1/setup')
+    assert setup.status_code == 200
+    assert all(stage['status'] == 'ready' for stage in setup.json()['components'].values())
+    assert client.get('/').status_code == 200
+    assert client.get('/api/v1/health').json()['database'] == 'ok'
+    route, target, recommendation, proposal, approval_body = create_approved_tcp_proposal(client, fake_wsl)
+    proposal_route = f"{route}/proposals/{proposal['id']}"
     result = client.post(f'{proposal_route}/run')
     assert result.status_code == 200, result.text
     result_body = result.json()
@@ -125,13 +135,15 @@ def test_complete_authorized_workflow(desktop_client):
     assert len(fake_wsl.calls) == 1
     audit = client.get(f'{route}/audit-history?limit=100')
     assert audit.status_code == 200
-    action_events = {
-        event['event_type']: event['details']
-        for event in audit.json()['events']
+    action_events = [
+        event for event in audit.json()['events']
         if event['event_type'] in {'action.started', 'action.completed'}
-    }
-    assert set(action_events) == {'action.started', 'action.completed'}
-    for details in action_events.values():
+    ]
+    assert len(action_events) == 2
+    assert [event['event_type'] for event in action_events].count('action.started') == 1
+    assert [event['event_type'] for event in action_events].count('action.completed') == 1
+    for event in action_events:
+        details = event['details']
         assert details['action_id'] == result_body['action_id']
         assert details['proposal_id'] == proposal['id']
         assert details['approval_id'] == approval_body['approval_id']
@@ -145,7 +157,7 @@ def test_complete_authorized_workflow(desktop_client):
         'proposal_id': proposal['id'],
         'action_name': proposal['action_name'],
         'policy_allowed': True,
-        'policy_code': recommendation.json()['policy_decision']['code'],
+        'policy_code': recommendation['policy_decision']['code'],
     }]
     assert report_body['approvals'] == [{
         'proposal_id': proposal['id'],
@@ -156,3 +168,21 @@ def test_complete_authorized_workflow(desktop_client):
     assert report_body['audit_event_count'] >= len(audit.json()['events'])
     for response in (result, audit, report):
         assert 'FAKE_RAW_OUTPUT' not in response.text
+
+
+def test_action_claim_integrity_conflict_returns_409(desktop_client):
+    client, fake_wsl = desktop_client
+    route, _, _, proposal, _ = create_approved_tcp_proposal(client, fake_wsl)
+
+    def conflict_on_action_flush(session, _flush_context, _instances):
+        if any(isinstance(item, Action) for item in session.new):
+            raise IntegrityError('INSERT actions', {}, RuntimeError('unique constraint'))
+
+    event.listen(Session, 'before_flush', conflict_on_action_flush)
+    try:
+        response = client.post(f"{route}/proposals/{proposal['id']}/run")
+    finally:
+        event.remove(Session, 'before_flush', conflict_on_action_flush)
+
+    assert response.status_code == 409
+    assert response.json() == {'detail': 'Approval was already claimed'}

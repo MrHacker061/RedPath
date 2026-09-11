@@ -286,30 +286,30 @@ def run_approved_action(
             detail="Approval is not valid for execution",
         )
 
-    action = Action(
-        session_id=item.id,
-        proposal_id=proposal.id,
-        approval_id=approval.id,
-        name=validated.action_name,
-        arguments_json=json.dumps(
-            validated.arguments, sort_keys=True, separators=(",", ":")
-        ),
-        status="running",
-    )
-    approval.used_at = _now()
-    db.add(action)
-    db.flush()
-    audit(
-        db,
-        item.id,
-        "action.started",
-        action_id=action.id,
-        proposal_id=proposal.id,
-        approval_id=approval.id,
-        target_id=target.id,
-        status="running",
-    )
     try:
+        action = Action(
+            session_id=item.id,
+            proposal_id=proposal.id,
+            approval_id=approval.id,
+            name=validated.action_name,
+            arguments_json=json.dumps(
+                validated.arguments, sort_keys=True, separators=(",", ":")
+            ),
+            status="running",
+        )
+        approval.used_at = _now()
+        db.add(action)
+        db.flush()
+        audit(
+            db,
+            item.id,
+            "action.started",
+            action_id=action.id,
+            proposal_id=proposal.id,
+            approval_id=approval.id,
+            target_id=target.id,
+            status="running",
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()

@@ -66,3 +66,28 @@ frontend suite passed 65 tests; Kali VM, desktop-build, and installer policy
 checks passed; `compileall` and `git diff --check` passed. Both build scripts
 returned their stable exit code 2 prerequisite outcome without installing
 anything.
+
+## Correction round 2
+
+- Put action creation, the identity-generating flush, action-started audit, and
+  commit in one `IntegrityError` rollback boundary. A fake-only uniqueness
+  conflict now returns the existing mapped HTTP 409 response instead of leaking
+  a database exception.
+- Made the end-to-end audit assertion an exact two-item list with one
+  `action.started` and one `action.completed` event, rather than collapsing
+  entries into a dictionary.
+- Made `[Setup]` an exact installer key/value allowlist. The policy test now
+  rejects extra directives such as `InfoBeforeFile` and
+  `PrivilegesRequiredOverridesAllowed`.
+- Rebound the checklist to `720cd8450018e702ca30fc8d06a48c6511e8edd6` and
+  distinguishes the `pwsh` 7.6.5 host from the `powershell.exe`
+  5.1.26100.9444 build/test runtime.
+- Corrected the guide and checklist: recommendations currently use
+  `RuleBasedProvider` independent of model health, and run controls are gated
+  by exact approval plus emergency-stop state rather than setup health.
+
+Verification for this correction: `python -m pytest` passed 288 tests; the
+frontend suite passed 65 tests; Kali VM, desktop-build, and installer policy
+checks passed; `compileall` and `git diff --check` passed. Both build scripts
+returned their stable exit code 2 prerequisite outcome without installing
+anything.

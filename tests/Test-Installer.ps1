@@ -52,18 +52,48 @@ function Assert-ExactlyOneInstallerEntry([System.Collections.Generic.List[string
     }
 }
 
+function Assert-ApprovedSetup([System.Collections.Generic.List[string]]$entries) {
+    $approved = [ordered]@{
+        AppId = '{{F6B3970E-BF8A-4C32-B108-31560B255027}'
+        AppName = 'RedPath'
+        AppVersion = '0.1.0'
+        AppPublisher = 'RedPath'
+        DefaultDirName = '{localappdata}\Programs\RedPath'
+        DisableDirPage = 'yes'
+        PrivilegesRequired = 'lowest'
+        ArchitecturesAllowed = 'x64os'
+        ArchitecturesInstallIn64BitMode = 'x64os'
+        MinVersion = '10.0.22000'
+        OutputDir = '..\dist\installer'
+        OutputBaseFilename = 'RedPath-Setup-0.1.0-x64'
+        Compression = 'lzma2'
+        SolidCompression = 'yes'
+        WizardStyle = 'modern'
+        UninstallDisplayIcon = '{app}\RedPath.exe'
+        TimeStampsInUTC = 'yes'
+        TouchDate = '2026-09-11'
+        TouchTime = '00:00:00'
+    }
+    if ($entries.Count -ne $approved.Count) {
+        throw 'INSTALLER_TEST_FAILED: [Setup] has an unexpected directive count.'
+    }
+    $seen = @{}
+    foreach ($entry in $entries) {
+        if ($entry -notmatch '^([A-Za-z][A-Za-z0-9]*)=(.+)$') {
+            throw 'INSTALLER_TEST_FAILED: [Setup] entry must be an exact key=value directive.'
+        }
+        $key = $Matches[1]
+        $value = $Matches[2]
+        if (-not $approved.Contains($key) -or $seen.ContainsKey($key) -or $value -cne $approved[$key]) {
+            throw "INSTALLER_TEST_FAILED: [Setup] contains an unapproved directive or value: $key."
+        }
+        $seen[$key] = $true
+    }
+}
+
 function Assert-InstallerDefinition([string]$source) {
     $sections = Get-InstallerSections $source
-    foreach ($required in @(
-        'PrivilegesRequired=lowest', 'ArchitecturesAllowed=x64os',
-        'ArchitecturesInstallIn64BitMode=x64os', 'MinVersion=10.0.22000',
-        'DefaultDirName={localappdata}\Programs\RedPath', 'DisableDirPage=yes',
-        'OutputBaseFilename=RedPath-Setup-0.1.0-x64'
-    )) {
-        if ($sections.Setup -notcontains $required) {
-            throw "INSTALLER_TEST_FAILED: Missing required [Setup] value $required."
-        }
-    }
+    Assert-ApprovedSetup $sections.Setup
     Assert-ExactlyOneInstallerEntry $sections.Tasks 'Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked' 'Tasks'
     Assert-ExactlyOneInstallerEntry $sections.Files 'Source: "..\dist\RedPath\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs touch' 'Files'
     if ($sections.Icons.Count -ne 2 -or $sections.Icons[0] -cne 'Name: "{userprograms}\RedPath"; Filename: "{app}\RedPath.exe"' -or $sections.Icons[1] -cne 'Name: "{userdesktop}\RedPath"; Filename: "{app}\RedPath.exe"; Tasks: desktopicon') {
@@ -103,6 +133,8 @@ Assert-InstallerDefinitionRejected "$installer`r`n[Dirs]`r`nName: `"{localappdat
 Assert-InstallerDefinitionRejected ($installer -replace 'DestDir: "\{app\}"', 'DestDir: "{localappdata}\RedPath"') 'unexpected [Files] destination'
 Assert-InstallerDefinitionRejected ($installer -replace 'Flags: unchecked', 'Flags: unchecked uninsalwaysuninstall') 'uninstall deletion flag'
 Assert-InstallerDefinitionRejected "$installer`r`n[UninstallDelete]`r`nType: files; Name: `"{localappdata}\RedPath`"" 'uninstall deletion section'
+Assert-InstallerDefinitionRejected ($installer -replace '(?m)(?<=^\[Setup\]\r?\n)', "InfoBeforeFile=notice.txt`r`n") 'unexpected [Setup] directive'
+Assert-InstallerDefinitionRejected ($installer -replace '(?m)(?<=^\[Setup\]\r?\n)', "PrivilegesRequiredOverridesAllowed=dialog`r`n") 'unexpected [Setup] privilege override'
 foreach ($required in @('INSTALLER_BUILD_PREREQUISITE', 'INSTALLER_BUILD_INPUT_MISSING', 'INSTALLER_BUILD_FAILED', 'RedPath-Setup-0.1.0-x64.exe', 'Get-FileHash', 'SOURCE_DATE_EPOCH')) {
     if (-not $build.Contains($required)) { throw "INSTALLER_TEST_FAILED: Build missing $required" }
 }
