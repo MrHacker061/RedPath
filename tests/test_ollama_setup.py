@@ -1,6 +1,8 @@
 from pathlib import Path
 from threading import Event
 
+import pytest
+
 from redpath_ai.providers import OllamaProvider
 from redpath_setup.manifest import OLLAMA_ARTIFACT
 
@@ -11,18 +13,51 @@ class RecordingRunner:
         self.calls: list[list[str]] = []
         self.timeouts: list[float] = []
 
-    def __call__(self, argv, _cwd: Path, timeout: float):
+    def __call__(self, argv, _cwd: Path, timeout: float, _cancelled: Event, progress):
         self.calls.append(list(argv))
         self.timeouts.append(timeout)
+        progress(0, None)
         return type("Result", (), {"returncode": self.exit_code, "stdout": "untrusted", "stderr": "untrusted"})()
 
 
+def tags_provider(models):
+    calls = []
+
+    def transport(url, body, timeout):
+        calls.append((url, body, timeout))
+        return {"models": models}
+
+    return OllamaProvider(transport=transport), calls
+
+
 def installed_provider() -> OllamaProvider:
-    return OllamaProvider(transport=lambda *_: {"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]})
+    return tags_provider([{"name": "qwen2.5:7b-instruct-q4_K_M"}])[0]
 
 
 def unavailable_provider() -> OllamaProvider:
     return OllamaProvider(transport=lambda *_: {"models": []})
+
+
+class CancelledProcess:
+    returncode = None
+
+    def __init__(self, cancelled: Event) -> None:
+        self.cancelled = cancelled
+        self.terminated = False
+
+    def poll(self):
+        self.cancelled.set()
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = -15
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
 
 
 def test_ollama_install_requires_consent(tmp_path):
@@ -74,10 +109,41 @@ def test_model_pull_uses_exact_model_name_and_confirms_loopback_tags(tmp_path):
     from redpath_setup.ollama import OllamaSetup
 
     runner = RecordingRunner()
-    stage = OllamaSetup(tmp_path, runner=runner, provider=installed_provider()).pull_model(True, lambda *_: None, Event())
+    provider, health_calls = tags_provider([{"name": "qwen2.5:7b-instruct-q4_K_M"}])
+    stage = OllamaSetup(tmp_path, runner=runner, provider=provider).pull_model(True, lambda *_: None, Event())
     assert runner.calls == [["ollama", "pull", "qwen2.5:7b-instruct-q4_K_M"]]
     assert runner.timeouts == [600]
     assert stage.status == "ready"
+    assert health_calls == [("http://127.0.0.1:11434/api/tags", None, 20.0)]
+
+
+def test_successful_model_pull_reports_missing_model_when_tags_omits_it(tmp_path):
+    from redpath_setup.ollama import OllamaSetup
+
+    provider, health_calls = tags_provider([])
+    stage = OllamaSetup(tmp_path, runner=RecordingRunner(), provider=provider).pull_model(True, lambda *_: None, Event())
+    assert (stage.status, stage.code) == ("needs_attention", "MODEL_MISSING")
+    assert health_calls == [("http://127.0.0.1:11434/api/tags", None, 20.0)]
+
+
+def test_cancellable_runner_terminates_active_child_and_reports_only_numeric_progress(tmp_path, monkeypatch):
+    from redpath_setup import ollama
+
+    cancelled = Event()
+    child = CancelledProcess(cancelled)
+    calls = []
+    monkeypatch.setattr(ollama.subprocess, "Popen", lambda *args, **kwargs: calls.append((args, kwargs)) or child)
+    progress = []
+    with pytest.raises(ollama.ProcessCancelled):
+        ollama._run(
+            ["ollama", "pull", "qwen2.5:7b-instruct-q4_K_M"], tmp_path, 600, cancelled,
+            lambda done, total: progress.append((done, total)),
+        )
+    assert child.terminated
+    assert progress == [(0, None)]
+    assert calls[0][1]["shell"] is False
+    assert calls[0][1]["stdout"] is ollama.subprocess.DEVNULL
+    assert calls[0][1]["stderr"] is ollama.subprocess.DEVNULL
 
 
 def test_model_pull_requires_consent_before_running_command(tmp_path):

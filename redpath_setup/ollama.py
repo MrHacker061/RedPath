@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from threading import Event
@@ -22,23 +23,47 @@ class CommandResult(Protocol):
     returncode: int
 
 
-Runner = Callable[[Sequence[str], Path, float], CommandResult]
+Runner = Callable[[Sequence[str], Path, float, Event, Progress], CommandResult]
 Downloader = Callable[[object, Path, Progress, Event], Path]
 
 
-def _run(argv: Sequence[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]:
-    """Run a fixed setup command without exposing or retaining its output."""
-    return subprocess.run(
+class ProcessCancelled(RuntimeError):
+    """A setup operation was cancelled while its child process was active."""
+
+
+def _stop(process: subprocess.Popen[str]) -> None:
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def _run(
+    argv: Sequence[str], cwd: Path, timeout: float, cancelled: Event, progress: Progress
+) -> subprocess.CompletedProcess[str]:
+    """Run a fixed command, discarding output and stopping promptly on cancellation."""
+    progress(0, None)
+    process = subprocess.Popen(
         list(argv),
         cwd=cwd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         text=True,
-        timeout=timeout,
-        check=False,
         shell=False,
     )
+    deadline = time.monotonic() + timeout
+    while process.poll() is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _stop(process)
+            raise subprocess.TimeoutExpired(list(argv), timeout)
+        if cancelled.wait(min(0.1, remaining)):
+            _stop(process)
+            raise ProcessCancelled()
+    return subprocess.CompletedProcess(list(argv), process.returncode)
 
 
 class OllamaSetup:
@@ -87,8 +112,10 @@ class OllamaSetup:
             return SetupStage("ollama", "failed", "OLLAMA_INSTALLER_INVALID", "The verified installer is unavailable.")
         try:
             result = self.runner(
-                [str(installer), "/VERYSILENT", "/NORESTART"], self.destination, INSTALL_TIMEOUT_SECONDS
+                [str(installer), "/VERYSILENT", "/NORESTART"], self.destination, INSTALL_TIMEOUT_SECONDS, cancelled, progress
             )
+        except ProcessCancelled:
+            return self._cancelled()
         except subprocess.TimeoutExpired:
             return SetupStage("ollama", "failed", "OLLAMA_INSTALL_TIMEOUT", "The installer did not finish in time.")
         except OSError:
@@ -102,9 +129,12 @@ class OllamaSetup:
             return self._consent_required()
         if cancelled.is_set():
             return self._cancelled()
-        progress(0, None)
         try:
-            result = self.runner(["ollama", "pull", OLLAMA_MODEL], self.destination, INSTALL_TIMEOUT_SECONDS)
+            result = self.runner(
+                ["ollama", "pull", OLLAMA_MODEL], self.destination, INSTALL_TIMEOUT_SECONDS, cancelled, progress
+            )
+        except ProcessCancelled:
+            return self._cancelled()
         except subprocess.TimeoutExpired:
             return SetupStage("ollama", "failed", "OLLAMA_MODEL_PULL_TIMEOUT", "The model download did not finish in time.")
         except OSError:
