@@ -1,7 +1,7 @@
 const ACTION_ARGUMENTS = Object.freeze({
-  inspect_http_headers: ["target_id", "port"],
-  inspect_tls_certificate: ["target_id", "port"],
-  check_tcp_connection: ["target_id", "port", "timeout_seconds"],
+  inspect_http_headers: { required: ["target_id", "port"], optional: [] },
+  inspect_tls_certificate: { required: ["target_id", "port"], optional: [] },
+  check_tcp_connection: { required: ["target_id", "port"], optional: ["timeout_seconds"] },
 });
 
 function unavailable() {
@@ -15,12 +15,14 @@ function boundedText(value, maxLength) {
 
 function normalizeArguments(actionName, value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) unavailable();
-  const allowed = ACTION_ARGUMENTS[actionName];
-  if (!allowed) unavailable();
+  if (!Object.hasOwn(ACTION_ARGUMENTS, actionName)) unavailable();
+  const schema = ACTION_ARGUMENTS[actionName];
+  const allowed = [...schema.required, ...schema.optional];
   const supplied = Object.keys(value);
-  if (supplied.length !== allowed.length || supplied.some((name) => !allowed.includes(name))) unavailable();
+  if (supplied.some((name) => !allowed.includes(name)) || schema.required.some((name) => !Object.hasOwn(value, name))) unavailable();
   const result = {};
   for (const name of allowed) {
+    if (!Object.hasOwn(value, name)) continue;
     const argument = value[name];
     if (name === "target_id") result[name] = boundedText(argument, 128);
     else if (!Number.isInteger(argument) || argument < 1 || argument > (name === "port" ? 65535 : 10)) unavailable();

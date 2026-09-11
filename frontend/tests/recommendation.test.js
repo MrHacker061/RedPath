@@ -79,6 +79,15 @@ test("recommendation normalization keeps only registered strict action fields", 
   assert.equal(JSON.stringify(normalized).includes("do-not-show"), false);
 });
 
+test("TCP recommendation accepts its optional timeout when omitted", () => {
+  const withoutTimeout = structuredClone(response);
+  withoutTimeout.proposal.arguments = { target_id: "target-1", port: 22 };
+  assert.deepEqual(workflow.normalizeRecommendation(withoutTimeout).proposal.arguments, {
+    target_id: "target-1",
+    port: 22,
+  });
+});
+
 test("recommendation normalization rejects unknown actions and mismatched decisions", () => {
   assert.throws(
     () => workflow.normalizeRecommendation({ ...response, proposal: { ...response.proposal, action_name: "run_shell" } }),
