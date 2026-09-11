@@ -21,3 +21,14 @@ kali-ssh-config
 *.vdi
 *.ova
 *.7z
+
+# Codex local configuration
+.codex/
+# Claude Flow runtime data
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/policy/state.json
+.swarm/
+# Environment variables
+.env.local
+.env.*.local
