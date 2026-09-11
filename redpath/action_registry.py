@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
@@ -117,10 +118,19 @@ def validate_untrusted_proposal(
     )
 
 
-def action_protected_hash(proposal: ValidatedProposal) -> str:
-    """Bind approval to the canonical action name and validated arguments."""
+def action_protected_hash(
+    proposal: ValidatedProposal,
+    *,
+    session_id: str,
+    target_id: str,
+    proposal_id: str,
+) -> str:
+    """Bind approval to one exact scoped proposal and its protected action."""
 
     protected = {
+        "session_id": session_id,
+        "target_id": target_id,
+        "proposal_id": proposal_id,
         "action_name": proposal.action_name,
         "arguments": proposal.arguments,
     }
@@ -131,10 +141,37 @@ def action_protected_hash(proposal: ValidatedProposal) -> str:
 
 
 def revalidate_approval_before_execution(
-    proposal: ValidatedProposal, *, approved_protected_hash: str
+    proposal: ValidatedProposal,
+    *,
+    session_id: str,
+    target_id: str,
+    proposal_id: str,
+    approved_protected_hash: str,
+    approval_status: str,
+    approval_expires_at: datetime,
+    approval_used_at: datetime | None,
+    emergency_stop_active: bool,
 ) -> None:
-    """Fail closed if action name or arguments changed after user approval."""
+    """Fail closed if approval scope or protected action changed."""
 
-    current_hash = action_protected_hash(proposal)
+    if emergency_stop_active:
+        raise ValueError("Emergency stop is active")
+    if approval_status != "approved":
+        raise ValueError("approval is not approved")
+    expires_at = (
+        approval_expires_at.replace(tzinfo=timezone.utc)
+        if approval_expires_at.tzinfo is None
+        else approval_expires_at.astimezone(timezone.utc)
+    )
+    if expires_at <= datetime.now(timezone.utc):
+        raise ValueError("approval has expired")
+    if approval_used_at is not None:
+        raise ValueError("approval has already been used")
+    current_hash = action_protected_hash(
+        proposal,
+        session_id=session_id,
+        target_id=target_id,
+        proposal_id=proposal_id,
+    )
     if not hmac.compare_digest(current_hash, approved_protected_hash):
         raise ValueError("action no longer matches the exact approved name and arguments")

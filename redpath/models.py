@@ -214,6 +214,14 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class EmergencyStop(Timestamped, Base):
+    __tablename__ = "emergency_stop"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Report(Timestamped, Base):
     __tablename__ = "reports"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

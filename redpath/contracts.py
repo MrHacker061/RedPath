@@ -147,3 +147,71 @@ class ScanImportContract(StrictModel):
 class ScanImportResponse(StrictModel):
     scan_import: ScanImportContract
     findings: list[NormalizedFinding]
+
+
+class ApprovalDecisionContract(StrictModel):
+    proposal_id: str
+    status: Literal["approved", "rejected"]
+    approval_id: str | None
+    expires_at: datetime | None
+
+
+class EmergencyStopContract(StrictModel):
+    active: bool
+    activated_at: datetime | None = None
+    cleared_at: datetime | None = None
+
+
+class AuditEventContract(StrictModel):
+    id: str
+    session_id: str | None
+    event_type: str = Field(max_length=100)
+    details: dict[str, str | int | bool | list[str] | None]
+    created_at: datetime
+
+
+class AuditHistoryContract(StrictModel):
+    events: tuple[AuditEventContract, ...] = Field(max_length=100)
+    truncated: bool
+
+
+class ReportTargetContract(StrictModel):
+    target_id: str
+    expires_at: datetime
+    locked: bool
+
+
+class ReportEvidenceContract(StrictModel):
+    total: int = Field(ge=0)
+    observed: int = Field(ge=0)
+    inferred: int = Field(ge=0)
+    verified: int = Field(ge=0)
+
+
+class ReportProposalContract(StrictModel):
+    proposal_id: str
+    action_name: str = Field(max_length=100)
+    policy_allowed: bool
+    policy_code: str = Field(max_length=80)
+
+
+class ReportApprovalContract(StrictModel):
+    proposal_id: str
+    status: Literal["approved", "rejected"]
+    expires_at: datetime | None
+    used: bool
+
+
+class LearningReportContract(StrictModel):
+    report_id: str
+    session_id: str
+    session_state: SessionState
+    generated_at: datetime
+    target: ReportTargetContract | None
+    evidence: ReportEvidenceContract
+    proposals: tuple[ReportProposalContract, ...] = Field(max_length=100)
+    approvals: tuple[ReportApprovalContract, ...] = Field(max_length=100)
+    proposals_truncated: bool
+    approvals_truncated: bool
+    audit_event_count: int = Field(ge=0)
+    execution_authorized: Literal[False] = False
