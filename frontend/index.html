@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="RedPath authorized cybersecurity learning dashboard">
+  <title>RedPath | Learning Dashboard</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">AUTHORIZED LAB LEARNING</p>
+      <h1>RedPath</h1>
+    </div>
+    <p class="header-copy">Understand the evidence. Approve the action. Learn from the result.</p>
+  </header>
+
+  <nav aria-label="Primary navigation">
+    <a href="#dashboard" aria-current="page">Dashboard</a>
+    <a href="#session">Lab session</a>
+    <a href="#evidence">Evidence</a>
+    <a href="#report">Report</a>
+  </nav>
+
+  <main id="main-content">
+    <section id="dashboard" aria-labelledby="dashboard-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">SYSTEM STATUS</p>
+          <h2 id="dashboard-title">Ready to learn safely</h2>
+        </div>
+        <button id="refresh-health" type="button">Refresh status</button>
+      </div>
+
+      <div id="health-message" class="notice" role="status" aria-live="polite">
+        Checking RedPath services…
+      </div>
+
+      <div class="health-grid" aria-label="Service health">
+        <article class="health-card" data-service="fastapi">
+          <div class="card-title"><h3>FastAPI</h3><span class="status-badge" data-status>Checking</span></div>
+          <p>Sessions, policy decisions, and approvals.</p>
+          <p class="detail" data-detail>Waiting for a response.</p>
+        </article>
+        <article class="health-card" data-service="ollama">
+          <div class="card-title"><h3>Ollama</h3><span class="status-badge" data-status>Checking</span></div>
+          <p>Local learning recommendations and explanations.</p>
+          <p class="detail" data-detail>Waiting for a response.</p>
+        </article>
+        <article class="health-card" data-service="kali">
+          <div class="card-title"><h3>Headless Kali</h3><span class="status-badge" data-status>Checking</span></div>
+          <p>Controlled runner for approved, fixed actions.</p>
+          <p class="detail" data-detail>Waiting for a response.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="session" class="placeholder" aria-labelledby="session-title">
+      <p class="eyebrow">NEXT MILESTONE</p>
+      <h2 id="session-title">Start an authorized lab session</h2>
+      <p>The lesson link teaches you what to do. The target address identifies the separate system you have permission to test.</p>
+      <button type="button" disabled aria-describedby="session-note">Create session</button>
+      <p id="session-note" class="detail">Session creation will connect when the shared API contract is available.</p>
+    </section>
+
+    <section id="evidence" class="placeholder" aria-labelledby="evidence-title">
+      <p class="eyebrow">EVIDENCE</p>
+      <h2 id="evidence-title">No scan imported</h2>
+      <p>Observed scan facts, AI inferences, and verified results will remain clearly separated here.</p>
+    </section>
+
+    <section id="report" class="placeholder" aria-labelledby="report-title">
+      <p class="eyebrow">LEARNING REPORT</p>
+      <h2 id="report-title">Your session summary will appear here</h2>
+      <p>Reports will include the objective, evidence, approvals, results, cleanup, and suggested topics to study.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Only use RedPath on systems you own or have explicit permission to test.</p>
+  </footer>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

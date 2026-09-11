@@ -10,6 +10,7 @@ direct command execution.
 ```text
 redpath/    FastAPI backend, strict shared contracts, and SQLite models
 docs/       RedPath context, architecture, connections, and implementation tasks
+frontend/   Dependency-free student dashboard shell and shared API client
 scanner/    Authorized private-lab Python scanner
 redpath_ai/ Strict recommendation providers, prompts, and AI schemas
 tests/      Python scanner tests and PowerShell VM tests
@@ -65,6 +66,32 @@ python -m unittest discover -s tests -v
 a deterministic fallback. It produces validated recommendations and beginner
 explanations only. It has no command runner, SSH client, scanner integration, or
 execution authority. The backend remains responsible for policy and approval.
+
+## Frontend dashboard
+
+The Milestone 1 dashboard is a dependency-free HTML, CSS, and JavaScript shell.
+It uses Worker 1's same-origin `GET /api/v1/health` endpoint. The current
+API-only response marks FastAPI as available and leaves Ollama and Kali as not
+reported. It also accepts the planned aggregate `{ "services": { ... } }`
+response without changing routes. Backend detail text is never displayed;
+stable status codes map to bounded frontend messages. Kali `poweroff`,
+`not_created`, and `stopped` states are shown as available on demand.
+
+Run it from the repository root with Python:
+
+```powershell
+python -m http.server 8080 --directory frontend
+```
+
+Then open `http://127.0.0.1:8080`. The health cards will show the expected
+offline state until FastAPI serves both the frontend and `/api/health`, or a
+development reverse proxy routes `/api` to the backend.
+
+Run its dependency-free tests with Node.js 18 or newer:
+
+```powershell
+node --test frontend/tests/*.test.js
+```
 
 ## Headless Kali terminal
 
