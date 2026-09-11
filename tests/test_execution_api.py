@@ -20,7 +20,6 @@ from redpath.models import (
 )
 from redpath_kali import ActionResult, ActionStatus
 
-
 @pytest.fixture
 def app(tmp_path):
     return create_app(Settings(database_url=f"sqlite:///{tmp_path / 'execution.db'}"))
@@ -31,10 +30,8 @@ def client(app):
     with TestClient(app) as value:
         yield value
 
-
 def future(minutes: int = 60) -> str:
     return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
-
 
 def seed_approved_http_action(client, app):
     session = client.post(
@@ -120,15 +117,18 @@ def test_run_uses_only_the_approved_stored_action_and_persists_result(client, ap
     assert body["cleanup_status"] == "completed"
     assert body["evidence"] == [
         {
-            "kind": "execution",
+            "kind": "http_headers",
             "action_name": "inspect_http_headers",
             "target_id": target["id"],
             "target_address": "192.168.56.20",
             "port": 80,
+            "outcome": "succeeded",
             "output_truncated": False,
+            "http_status": 200,
+            "failure_category": None,
         },
-        {"kind": "stdout", "text": "HTTP/1.1 200 OK\nServer: lab\n"},
     ]
+    assert "Server: lab" not in response.text
     assert dispatcher.calls == [(
         "inspect_http_headers",
         {"target_id": target["id"], "port": 80},
@@ -227,6 +227,7 @@ def test_claim_is_durable_before_dispatch_and_cannot_be_reused(client, app):
         "proposal_changed",
         "target_locked",
         "target_expired",
+        "target_address_changed",
         "authorization_revoked",
     ],
 )
@@ -258,6 +259,8 @@ def test_execution_revalidates_all_authorization_state_before_claim(
             db.get(AuthorizedTarget, target["id"]).expires_at = (
                 datetime.now(timezone.utc) - timedelta(seconds=1)
             )
+        elif mutation == "target_address_changed":
+            db.get(AuthorizedTarget, target["id"]).address = "192.168.56.99"
         else:
             db.get(LabSession, session["id"]).authorization_confirmed = False
         db.commit()
@@ -379,6 +382,10 @@ def test_dispatcher_unavailability_fails_closed_after_consuming_claim(
         assert action.status == "failed"
         assert result.status == "failed"
         assert "SECRET_INTERNAL_DETAIL" not in result.evidence_json
+        if mode == "raises":
+            assert json.loads(result.evidence_json) == [
+                {"category": "dispatcher_error", "kind": "failure"}
+            ]
 
 
 def test_persisted_evidence_is_redacted_bounded_and_marks_backend_truncation(
@@ -407,10 +414,16 @@ def test_persisted_evidence_is_redacted_bounded_and_marks_backend_truncation(
     assert "SECRET_TOKEN" not in response.text
     metadata = response.json()["evidence"][0]
     assert metadata["output_truncated"] is True
-    assert "[output truncated by backend]" in response.text
+    assert set(metadata) == {
+        "kind", "action_name", "target_id", "target_address", "port",
+        "outcome", "output_truncated", "http_status", "failure_category",
+    }
+    assert "💥" not in response.text
+    assert "界" not in response.text
     with app.state.session_factory() as db:
         result = db.scalar(select(StoredActionResult))
         assert len(result.evidence_json) <= 16_384
+        assert all(value not in result.evidence_json for value in ("SECRET", "💥", "界"))
         audits = "".join(db.scalars(select(AuditEvent.safe_details_json)).all())
         assert "SECRET_COOKIE" not in audits
         assert "SECRET_TOKEN" not in audits
@@ -420,22 +433,20 @@ def test_proposal_is_revalidated_again_after_durable_claim_before_dispatch(
     client, app, monkeypatch
 ):
     session, target, proposal, approval = seed_approved_http_action(client, app)
-    original_begin = execution_api._begin_state_change
-    begin_count = 0
+    original_revalidate = execution_api._revalidate_claimed_action
 
-    def mutate_before_second_begin(db):
-        nonlocal begin_count
-        begin_count += 1
-        if begin_count == 2:
-            with app.state.session_factory() as other_db:
-                stored = other_db.get(Proposal, proposal["id"])
-                stored.arguments_json = json.dumps(
-                    {"target_id": target["id"], "port": 8080}
-                )
-                other_db.commit()
-        original_begin(db)
+    def mutate_before_revalidation(db, **kwargs):
+        with app.state.session_factory() as other_db:
+            stored = other_db.get(Proposal, proposal["id"])
+            stored.arguments_json = json.dumps(
+                {"target_id": target["id"], "port": 8080}
+            )
+            other_db.commit()
+        return original_revalidate(db, **kwargs)
 
-    monkeypatch.setattr(execution_api, "_begin_state_change", mutate_before_second_begin)
+    monkeypatch.setattr(
+        execution_api, "_revalidate_claimed_action", mutate_before_revalidation
+    )
     dispatcher = RecordingDispatcher(None)
     app.state.action_dispatcher = dispatcher
 

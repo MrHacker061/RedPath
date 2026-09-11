@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import ValidationError
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,7 +19,6 @@ from redpath.contracts import (
     ApprovalDecisionContract,
     AuditEventContract,
     AuditHistoryContract,
-    EmergencyStopContract,
     LearningReportContract,
     ReportApprovalContract,
     ReportEvidenceContract,
@@ -30,7 +29,6 @@ from redpath.models import (
     Approval,
     AuditEvent,
     AuthorizedTarget,
-    EmergencyStop,
     Finding,
     LabSession,
     PolicyDecision,
@@ -38,9 +36,9 @@ from redpath.models import (
     Report,
 )
 from redpath.session_api import active_session, audit, get_db, utc, validate_private_target
+from redpath.stop_api import _begin_state_change, _now, emergency_stop_active
 
 router = APIRouter(prefix="/api/v1", tags=["approvals"])
-EMERGENCY_STOP_ID = "local-redpath-service"
 APPROVAL_TTL = timedelta(minutes=15)
 MAX_REPORT_ITEMS = 100
 SAFE_AUDIT_KEYS = frozenset({
@@ -62,63 +60,6 @@ SAFE_AUDIT_KEYS = frozenset({
     "target_id",
     "used_fallback",
 })
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def emergency_stop_active(db: Session) -> bool:
-    """Return the local service stop state for approval/action gates."""
-
-    state = db.get(EmergencyStop, EMERGENCY_STOP_ID)
-    return bool(state and state.active)
-def _stop_contract(state: EmergencyStop | None) -> EmergencyStopContract:
-    return EmergencyStopContract(
-        active=bool(state and state.active),
-        activated_at=utc(state.activated_at) if state and state.activated_at else None,
-        cleared_at=utc(state.cleared_at) if state and state.cleared_at else None,
-    )
-
-
-def _begin_state_change(db: Session) -> None:
-    """Serialize stop and approval transitions in the local SQLite service."""
-
-    db.execute(text("BEGIN IMMEDIATE"))
-@router.get("/emergency-stop", response_model=EmergencyStopContract)
-def get_emergency_stop(db: Session = Depends(get_db)) -> EmergencyStopContract:
-    return _stop_contract(db.get(EmergencyStop, EMERGENCY_STOP_ID))
-
-
-@router.post("/emergency-stop", response_model=EmergencyStopContract)
-def activate_emergency_stop(db: Session = Depends(get_db)) -> EmergencyStopContract:
-    _begin_state_change(db)
-    state = db.get(EmergencyStop, EMERGENCY_STOP_ID)
-    if state is None:
-        state = EmergencyStop(id=EMERGENCY_STOP_ID)
-        db.add(state)
-    if not state.active:
-        state.active = True
-        state.activated_at = _now()
-        state.cleared_at = None
-        audit(db, None, "emergency_stop.activated")
-        db.commit()
-        db.refresh(state)
-    return _stop_contract(state)
-@router.post("/emergency-stop/clear", response_model=EmergencyStopContract)
-def clear_emergency_stop(db: Session = Depends(get_db)) -> EmergencyStopContract:
-    _begin_state_change(db)
-    state = db.get(EmergencyStop, EMERGENCY_STOP_ID)
-    if state is None:
-        state = EmergencyStop(id=EMERGENCY_STOP_ID, active=False)
-        db.add(state)
-    if state.active or state.cleared_at is None:
-        state.active = False
-        state.cleared_at = _now()
-        audit(db, None, "emergency_stop.cleared")
-        db.commit()
-        db.refresh(state)
-    return _stop_contract(state)
-
-
 def _proposal_for_session(db: Session, session_id: str, proposal_id: str) -> Proposal:
     proposal = db.scalar(
         select(Proposal).where(
@@ -214,6 +155,7 @@ def _record_decision(
         validated,
         session_id=item.id,
         target_id=target.id,
+        target_address=target.address,
         proposal_id=proposal.id,
     )
     decision = Approval(

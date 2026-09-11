@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import ipaddress
 import json
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -123,6 +124,7 @@ def action_protected_hash(
     *,
     session_id: str,
     target_id: str,
+    target_address: str,
     proposal_id: str,
 ) -> str:
     """Bind approval to one exact scoped proposal and its protected action."""
@@ -130,6 +132,7 @@ def action_protected_hash(
     protected = {
         "session_id": session_id,
         "target_id": target_id,
+        "target_address": str(ipaddress.ip_address(target_address)),
         "proposal_id": proposal_id,
         "action_name": proposal.action_name,
         "arguments": proposal.arguments,
@@ -145,6 +148,7 @@ def revalidate_approval_before_execution(
     *,
     session_id: str,
     target_id: str,
+    target_address: str,
     proposal_id: str,
     approved_protected_hash: str,
     approval_status: str,
@@ -171,6 +175,7 @@ def revalidate_approval_before_execution(
         proposal,
         session_id=session_id,
         target_id=target_id,
+        target_address=target_address,
         proposal_id=proposal_id,
     )
     if not hmac.compare_digest(current_hash, approved_protected_hash):

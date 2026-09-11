@@ -13,13 +13,10 @@ from redpath.action_registry import (
     ValidatedProposal,
     revalidate_approval_before_execution,
 )
-from redpath.approval_api import (
-    _begin_state_change,
-    _decision_context,
-    _now,
-    emergency_stop_active,
-)
+from redpath.approval_api import _decision_context
 from redpath.contracts import ActionResultContract
+from redpath.execution_evidence import structured_evidence
+from redpath.execution_fence import ExecutionFence
 from redpath.models import (
     Action,
     ActionResult as StoredActionResult,
@@ -28,12 +25,11 @@ from redpath.models import (
     PolicyDecision,
 )
 from redpath.session_api import audit, get_db
+from redpath.stop_api import _begin_state_change, _now, emergency_stop_active
 from redpath_kali import ActionResult as KaliActionResult
 from redpath_kali import ActionStatus
 
 router = APIRouter(prefix="/api/v1", tags=["actions"])
-MAX_EVIDENCE_TEXT_CHARS = 4_096
-MAX_PERSISTED_EVIDENCE_CHARS = 16_384
 PARSERS = {
     "check_tcp_connection": "tcp_connection_v1",
     "inspect_http_headers": "http_headers_v1",
@@ -44,58 +40,11 @@ STATUS_MAP = {
     ActionStatus.FAILED: "failed",
     ActionStatus.TIMED_OUT: "timed_out",
 }
-_SENSITIVE_HEADERS = frozenset({
-    "authorization",
-    "cookie",
-    "proxy-authorization",
-    "set-cookie",
+_FAILURE_CATEGORIES = frozenset({
+    "dispatcher_error",
+    "dispatcher_unavailable",
+    "invalid_dispatch_result",
 })
-
-
-def _redacted_bounded_text(value: str) -> tuple[str, bool]:
-    lines: list[str] = []
-    for line in value.splitlines(keepends=True):
-        name, separator, _ = line.partition(":")
-        if separator and name.strip().lower() in _SENSITIVE_HEADERS:
-            ending = "\n" if line.endswith("\n") else ""
-            lines.append(f"{name}: [redacted]{ending}")
-        else:
-            lines.append(line)
-    text = "".join(lines)
-    if len(text) <= MAX_EVIDENCE_TEXT_CHARS:
-        return text, False
-    return text[:MAX_EVIDENCE_TEXT_CHARS] + "\n[output truncated by backend]", True
-
-
-def _evidence(result: KaliActionResult) -> list[dict[str, Any]]:
-    stdout, stdout_truncated = _redacted_bounded_text(result.stdout)
-    stderr, stderr_truncated = _redacted_bounded_text(result.stderr)
-    error, error_truncated = _redacted_bounded_text(result.error or "")
-    evidence: list[dict[str, Any]] = [{
-        "kind": "execution",
-        "action_name": result.action_name,
-        "target_id": result.target_id,
-        "target_address": result.target_address,
-        "port": result.port,
-        "output_truncated": (
-            result.output_truncated
-            or stdout_truncated
-            or stderr_truncated
-            or error_truncated
-        ),
-    }]
-    if stdout:
-        evidence.append({"kind": "stdout", "text": stdout})
-    if stderr:
-        evidence.append({"kind": "stderr", "text": stderr})
-    if error:
-        evidence.append({"kind": "error", "text": error})
-    serialized = json.dumps(
-        evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    )
-    if len(serialized) > MAX_PERSISTED_EVIDENCE_CHARS:
-        raise ValueError("bounded action evidence exceeded its persistence limit")
-    return evidence
 
 
 def _latest_policy(db: Session, proposal_id: str) -> PolicyDecision | None:
@@ -145,6 +94,7 @@ def _revalidate_claimed_action(
         validated,
         session_id=item.id,
         target_id=target.id,
+        target_address=target.address,
         proposal_id=proposal.id,
         approved_protected_hash=approval.protected_hash,
         approval_status=approval.status,
@@ -218,17 +168,25 @@ def _persist_result(
     )
 
 
-def _persist_dispatch_failure(db: Session, action: Action) -> NoReturn:
+def _persist_dispatch_failure(
+    db: Session,
+    action: Action,
+    category: str,
+    *,
+    detail: str = "Kali action dispatch failed",
+) -> NoReturn:
+    if category not in _FAILURE_CATEGORIES:
+        raise ValueError("unknown safe failure category")
     _persist_result(
         db,
         action,
         status="failed",
         exit_code=None,
         parser=PARSERS[action.name],
-        evidence=[],
+        evidence=[{"kind": "failure", "category": category}],
         cleanup_status="not_required",
     )
-    raise HTTPException(status_code=503, detail="Kali action dispatch failed")
+    raise HTTPException(status_code=503, detail=detail)
 
 
 def _valid_dispatch_result(result: object) -> bool:
@@ -244,6 +202,13 @@ def _valid_dispatch_result(result: object) -> bool:
     )
 
 
+def _execution_fence(request: Request) -> ExecutionFence:
+    fence = getattr(request.app.state, "execution_fence", None)
+    if not isinstance(fence, ExecutionFence):
+        raise HTTPException(status_code=503, detail="Execution fence is unavailable")
+    return fence
+
+
 @router.post(
     "/sessions/{session_id}/proposals/{proposal_id}/run",
     response_model=ActionResultContract,
@@ -256,6 +221,7 @@ def run_approved_action(
     db: Session = Depends(get_db),
 ) -> ActionResultContract:
     del payload
+    fence = _execution_fence(request)
     _begin_state_change(db)
     item, target, proposal, validated = _decision_context(db, session_id, proposal_id)
     approval = db.scalar(
@@ -302,6 +268,7 @@ def run_approved_action(
             validated,
             session_id=item.id,
             target_id=target.id,
+            target_address=target.address,
             proposal_id=proposal.id,
             approved_protected_hash=approval.protected_hash,
             approval_status=approval.status,
@@ -349,15 +316,22 @@ def run_approved_action(
     action_id = action.id
     approval_id = approval.id
     db.expire_all()
-    _begin_state_change(db)
-    try:
-        action, target, validated = _revalidate_claimed_action(
+    context: list[tuple[Action, AuthorizedTarget, ValidatedProposal]] = []
+
+    def final_authorization_check() -> bool:
+        if emergency_stop_active(db):
+            return False
+        context.append(_revalidate_claimed_action(
             db,
             action_id=action_id,
             approval_id=approval_id,
             session_id=session_id,
             proposal_id=proposal_id,
-        )
+        ))
+        return True
+
+    try:
+        allowed_to_start = fence.try_start(final_authorization_check)
     except (
         HTTPException,
         json.JSONDecodeError,
@@ -365,6 +339,7 @@ def run_approved_action(
         ValueError,
         ValidationError,
     ):
+        db.rollback()
         action = db.get(Action, action_id)
         if action is None:
             raise HTTPException(
@@ -376,44 +351,74 @@ def run_approved_action(
             status="cancelled",
             exit_code=None,
             parser=PARSERS[action.name],
-            evidence=[],
+            evidence=[{"kind": "failure", "category": "authorization_changed"}],
             cleanup_status="not_required",
         )
         raise HTTPException(
             status_code=409, detail="Authorization changed before dispatch"
         ) from None
-
-    dispatcher = getattr(request.app.state, "action_dispatcher", None)
-    if dispatcher is None:
+    if not allowed_to_start:
+        db.rollback()
+        action = db.get(Action, action_id)
+        if action is None:
+            raise HTTPException(
+                status_code=409, detail="Authorization changed before dispatch"
+            )
         _persist_result(
             db,
             action,
-            status="failed",
+            status="cancelled",
             exit_code=None,
             parser=PARSERS[action.name],
-            evidence=[],
+            evidence=[{"kind": "failure", "category": "emergency_stop"}],
             cleanup_status="not_required",
         )
-        raise HTTPException(status_code=503, detail="Kali action dispatcher is unavailable")
+        raise HTTPException(status_code=409, detail="Emergency stop is active")
+
+    action, target, validated = context[0]
+    dispatch_name = action.name
+    dispatch_arguments = json.loads(action.arguments_json)
+    dispatch_target_id = target.id
+    dispatch_target_address = target.address
+    dispatch_port = validated.arguments["port"]
+    db.rollback()
+
+    dispatcher = getattr(request.app.state, "action_dispatcher", None)
+    if dispatcher is None:
+        action = db.get(Action, action_id)
+        if action is None:
+            raise HTTPException(status_code=503, detail="Kali action dispatch failed")
+        _persist_dispatch_failure(
+            db,
+            action,
+            "dispatcher_unavailable",
+            detail="Kali action dispatcher is unavailable",
+        )
     try:
         result = dispatcher.dispatch(
-            action.name,
-            json.loads(action.arguments_json),
-            authorized_target_id=target.id,
-            authorized_target_address=target.address,
+            dispatch_name,
+            dispatch_arguments,
+            authorized_target_id=dispatch_target_id,
+            authorized_target_address=dispatch_target_address,
         )
     except Exception:
         logging.getLogger(__name__).error("Fixed Kali action dispatch failed")
-        _persist_dispatch_failure(db, action)
+        action = db.get(Action, action_id)
+        if action is None:
+            raise HTTPException(status_code=503, detail="Kali action dispatch failed")
+        _persist_dispatch_failure(db, action, "dispatcher_error")
 
     if not _valid_dispatch_result(result):
-        _persist_dispatch_failure(db, action)
+        action = db.get(Action, action_id)
+        if action is None:
+            raise HTTPException(status_code=503, detail="Kali action dispatch failed")
+        _persist_dispatch_failure(db, action, "invalid_dispatch_result")
     assert isinstance(result, KaliActionResult)
     expected_scope = (
-        action.name,
-        target.id,
-        target.address,
-        validated.arguments["port"],
+        dispatch_name,
+        dispatch_target_id,
+        dispatch_target_address,
+        dispatch_port,
     )
     actual_scope = (
         result.action_name,
@@ -422,8 +427,14 @@ def run_approved_action(
         result.port,
     )
     if actual_scope != expected_scope:
-        _persist_dispatch_failure(db, action)
+        action = db.get(Action, action_id)
+        if action is None:
+            raise HTTPException(status_code=503, detail="Kali action dispatch failed")
+        _persist_dispatch_failure(db, action, "invalid_dispatch_result")
 
+    action = db.get(Action, action_id)
+    if action is None:
+        raise HTTPException(status_code=503, detail="Kali action dispatch failed")
     terminal_status = STATUS_MAP[result.status]
     return _persist_result(
         db,
@@ -431,6 +442,6 @@ def run_approved_action(
         status=terminal_status,
         exit_code=result.exit_code,
         parser=PARSERS[action.name],
-        evidence=_evidence(result),
+        evidence=structured_evidence(result),
         cleanup_status="completed",
     )

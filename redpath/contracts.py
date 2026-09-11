@@ -1,6 +1,6 @@
 from enum import StrEnum
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -77,12 +77,65 @@ class RecommendationResponse(StrictModel):
     policy_decision: RecommendationPolicyDecisionContract
 
 
+class ScopedActionEvidence(StrictModel):
+    target_id: str = Field(min_length=1, max_length=128)
+    target_address: str = Field(min_length=1, max_length=45)
+    port: int = Field(ge=1, le=65_535)
+    outcome: Literal["succeeded", "failed", "timed_out"]
+    output_truncated: bool
+
+
+class TCPConnectionEvidence(ScopedActionEvidence):
+    kind: Literal["tcp_connection"]
+    action_name: Literal["check_tcp_connection"]
+    reachable: bool
+    failure_category: Literal["fixed_action_failed", "timed_out"] | None = None
+
+
+class HTTPHeadersEvidence(ScopedActionEvidence):
+    kind: Literal["http_headers"]
+    action_name: Literal["inspect_http_headers"]
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    failure_category: Literal["fixed_action_failed", "timed_out"] | None = None
+
+
+class TLSCertificateEvidence(ScopedActionEvidence):
+    kind: Literal["tls_certificate"]
+    action_name: Literal["inspect_tls_certificate"]
+    protocol: Literal["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"] | None = None
+    cipher_suite: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=r"^[A-Z0-9_-]+$"
+    )
+    verification: Literal["verified", "failed", "unknown"]
+    failure_category: Literal["fixed_action_failed", "timed_out"] | None = None
+
+
+class ActionFailureEvidence(StrictModel):
+    kind: Literal["failure"]
+    category: Literal[
+        "authorization_changed",
+        "dispatcher_error",
+        "dispatcher_unavailable",
+        "emergency_stop",
+        "invalid_dispatch_result",
+    ]
+
+
+ActionEvidenceContract = Annotated[
+    TCPConnectionEvidence
+    | HTTPHeadersEvidence
+    | TLSCertificateEvidence
+    | ActionFailureEvidence,
+    Field(discriminator="kind"),
+]
+
+
 class ActionResultContract(StrictModel):
     action_id: str
     status: Literal["completed", "failed", "timed_out", "cancelled"]
     exit_code: int | None = None
     parser: str
-    evidence: list[dict[str, Any]]
+    evidence: list[ActionEvidenceContract] = Field(min_length=1, max_length=1)
     cleanup_status: Literal["not_required", "pending", "completed", "failed"]
 
 
@@ -160,6 +213,9 @@ class EmergencyStopContract(StrictModel):
     active: bool
     activated_at: datetime | None = None
     cleared_at: datetime | None = None
+    execution_notice: Literal[
+        "When active, new work is blocked; already-started work may continue."
+    ] = "When active, new work is blocked; already-started work may continue."
 
 
 class AuditEventContract(StrictModel):

@@ -90,6 +90,7 @@ def test_action_hash_binds_session_target_proposal_action_and_arguments():
         proposal,
         session_id="session-1",
         target_id="target-1",
+        target_address="192.168.56.20",
         proposal_id="proposal-1",
     )
 
@@ -97,18 +98,41 @@ def test_action_hash_binds_session_target_proposal_action_and_arguments():
         proposal,
         session_id="session-2",
         target_id="target-1",
+        target_address="192.168.56.20",
         proposal_id="proposal-1",
     )
     assert original != action_protected_hash(
         proposal,
         session_id="session-1",
         target_id="target-2",
+        target_address="192.168.56.20",
         proposal_id="proposal-1",
     )
     assert original != action_protected_hash(
         proposal,
         session_id="session-1",
         target_id="target-1",
+        target_address="192.168.56.21",
+        proposal_id="proposal-1",
+    )
+    assert action_protected_hash(
+        proposal,
+        session_id="session-1",
+        target_id="target-1",
+        target_address="fd00:0:0:0:0:0:0:20",
+        proposal_id="proposal-1",
+    ) == action_protected_hash(
+        proposal,
+        session_id="session-1",
+        target_id="target-1",
+        target_address="fd00::20",
+        proposal_id="proposal-1",
+    )
+    assert original != action_protected_hash(
+        proposal,
+        session_id="session-1",
+        target_id="target-1",
+        target_address="192.168.56.20",
         proposal_id="proposal-2",
     )
 
@@ -147,6 +171,7 @@ def test_approve_returns_exact_contract_and_persists_short_lived_binding(client,
             ),
             session_id=session["id"],
             target_id=target["id"],
+            target_address=target["address"],
             proposal_id=proposal["id"],
         )
         assert approval.protected_hash == expected

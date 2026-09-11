@@ -11,9 +11,11 @@ from redpath.config import Settings, get_settings
 from redpath.contracts import ComponentHealth, HealthResponse
 from redpath.database import Base, create_database, migrate_database
 from redpath.execution_api import router as execution_router
+from redpath.execution_fence import ExecutionFence
 from redpath.nmap_parser import parse_nmap_xml_bytes
 from redpath.approval_api import router as approval_router
 from redpath.session_api import router as session_router
+from redpath.stop_api import router as stop_router
 from redpath_ai import RuleBasedProvider
 from redpath_kali import KaliActionDispatcher, KaliVMError, KaliVMManager
 import redpath.models  # noqa: F401
@@ -36,6 +38,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.llm_provider = RuleBasedProvider()
+    app.state.execution_fence = ExecutionFence()
     try:
         app.state.action_dispatcher = KaliActionDispatcher(
             KaliVMManager(Path(__file__).resolve().parents[1])
@@ -56,6 +59,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.nmap_parser = parse_import
     app.include_router(session_router)
     app.include_router(approval_router)
+    app.include_router(stop_router)
     app.include_router(execution_router)
 
     @app.get("/api/v1/health", response_model=HealthResponse)
