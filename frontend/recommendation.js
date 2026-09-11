@@ -103,7 +103,7 @@ export function renderRecommendation(elements, recommendation, documentImpl = do
 function currentApproval(state, now = Date.now()) {
   const receipt = state.receipt;
   const proposal = state.recommendation?.proposal;
-  return state.status === "approved" && state.busy === false && state.emergencyStopActive === false
+  return state.status === "approved" && state.busy === false && state.emergencyStopActive === false && state.emergencyStopConfirmedClear === true
     && receipt?.proposalId === proposal?.id && Number.isFinite(Date.parse(receipt?.expiresAt))
     && Date.parse(receipt.expiresAt) > now;
 }
@@ -184,12 +184,13 @@ export class ProposalWorkflow {
     this.now = now;
     this.onChange = onChange;
     this.confirmRun = confirmRun;
-    this.state = { status: "idle", busy: false, generation: 0, message: "No recommendation requested.", executionAvailable: false, emergencyStopActive: true };
+    this.state = { status: "idle", busy: false, generation: 0, message: "No recommendation requested.", executionAvailable: false, emergencyStopActive: true, emergencyStopConfirmedClear: false };
   }
 
   load(recommendation) {
     const status = recommendation.policyDecision.allowed ? "pending" : "rejected";
     const emergencyStopActive = this.state.emergencyStopActive !== false;
+    const emergencyStopConfirmedClear = emergencyStopActive ? false : this.state.emergencyStopConfirmedClear === true;
     this.state = {
       status,
       busy: false,
@@ -198,6 +199,7 @@ export class ProposalWorkflow {
         : "Policy rejected this proposal. It cannot be approved or executed.",
       executionAvailable: false,
       emergencyStopActive,
+      emergencyStopConfirmedClear,
       recommendation,
       receipt: null,
       generation: this.state.generation + 1,
@@ -256,8 +258,18 @@ export class ProposalWorkflow {
   async run() {
     const { receipt, recommendation } = this.state;
     if (!currentApproval(this.state, this.now()) || !this.state.executionAvailable || !receipt || receipt.proposalId !== recommendation?.proposal.id) return false;
+    const confirmation = {
+      generation: this.state.generation,
+      proposalId: recommendation.proposal.id,
+      approvalId: receipt.approvalId,
+      expiresAt: receipt.expiresAt,
+    };
     if (typeof this.confirmRun !== "function" || this.confirmRun("Run this exact approved learning action? RedPath will not run any other action or target.") !== true) return false;
-    const proposal = recommendation.proposal;
+    const currentReceipt = this.state.receipt;
+    const proposal = this.state.recommendation?.proposal;
+    if (!proposal || this.state.generation !== confirmation.generation || proposal.id !== confirmation.proposalId
+      || currentReceipt?.proposalId !== confirmation.proposalId || currentReceipt.approvalId !== confirmation.approvalId
+      || currentReceipt.expiresAt !== confirmation.expiresAt || !currentApproval(this.state, this.now()) || !this.state.executionAvailable) return false;
     this.state = { ...this.state, busy: true, executionAvailable: false, message: "Running the exact approved action…" };
     this.emit();
     try {
@@ -270,12 +282,14 @@ export class ProposalWorkflow {
     return true;
   }
 
-  setEmergencyStop(active) {
+  setEmergencyStop(active, confirmedClear = false) {
     const emergencyStopActive = active !== false;
-    const approvedAndCurrent = currentApproval({ ...this.state, emergencyStopActive }, this.now());
+    const emergencyStopConfirmedClear = !emergencyStopActive && confirmedClear === true;
+    const approvedAndCurrent = currentApproval({ ...this.state, emergencyStopActive, emergencyStopConfirmedClear }, this.now());
     this.state = {
       ...this.state,
       emergencyStopActive,
+      emergencyStopConfirmedClear,
       executionAvailable: approvedAndCurrent && !emergencyStopActive,
       message: this.state.status === "pending" ? pendingProposalMessage(emergencyStopActive) : this.state.message,
     };

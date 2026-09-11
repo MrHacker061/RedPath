@@ -66,13 +66,14 @@ export class SetupController {
   }
   async cancel(component) {
     fixedComponent(component);
-    if (this.state.busy && this.state.busy !== component) return false;
+    const activeComponent = this.state.busy || component;
+    const selectionMismatch = Boolean(this.state.busy && this.state.busy !== component);
     try {
-      const stage = componentStatus(await this.api.cancelSetup(component));
-      this.update({ ...this.state, status: "ready", busy: null, components: { ...this.state.components, [component]: stage }, message: `${component} cancellation request sent.` });
+      const stage = componentStatus(await this.api.cancelSetup(activeComponent));
+      this.update({ ...this.state, status: "ready", busy: null, components: { ...this.state.components, [activeComponent]: stage }, message: selectionMismatch ? `${component} was not active. Cancellation request sent to ${activeComponent}.` : `${activeComponent} cancellation request sent.` });
       return true;
     } catch {
-      this.update({ ...this.state, status: "error", busy: null, message: `${component} cancellation could not be confirmed.` });
+      this.update({ ...this.state, status: "error", busy: null, message: `${activeComponent} cancellation could not be confirmed.` });
       return false;
     }
   }

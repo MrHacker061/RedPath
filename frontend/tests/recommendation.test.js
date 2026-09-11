@@ -124,7 +124,7 @@ test("workflow prevents a duplicate approval request and becomes approved", asyn
     return new Promise((resolve) => { resolveApproval = resolve; });
   } };
   const controller = new workflow.ProposalWorkflow({ api, now: () => Date.parse("2029-01-01T00:00:00Z") });
-  controller.setEmergencyStop(false);
+  controller.setEmergencyStop(false, true);
   controller.load(workflow.normalizeRecommendation(response));
   const first = controller.decide("approve");
   const duplicate = await controller.decide("approve");
@@ -158,7 +158,7 @@ test("workflow marks an expired approval as non-executable", async () => {
     expires_at: "2028-01-01T00:00:00Z",
   }) };
   const controller = new workflow.ProposalWorkflow({ api, now: () => Date.parse("2029-01-01T00:00:00Z") });
-  controller.setEmergencyStop(false);
+  controller.setEmergencyStop(false, true);
   controller.load(workflow.normalizeRecommendation(response));
   await controller.decide("approve");
   assert.equal(controller.state.status, "expired");
@@ -177,7 +177,7 @@ test("workflow records rejection and does not expose an execution action", async
 test("workflow replaces backend errors with a bounded frontend message", async () => {
   const api = { approveProposal: async () => { throw new Error("secret backend traceback"); } };
   const controller = new workflow.ProposalWorkflow({ api });
-  controller.setEmergencyStop(false);
+  controller.setEmergencyStop(false, true);
   controller.load(workflow.normalizeRecommendation(response));
   await controller.decide("approve");
   assert.equal(controller.state.status, "error");
@@ -244,7 +244,7 @@ test("emergency stop defaults safe and blocks approval locally while preserving 
 test("clearing emergency stop restores the pending proposal guidance", () => {
   const controller = new workflow.ProposalWorkflow({ api: {} });
   controller.load(workflow.normalizeRecommendation(response));
-  controller.setEmergencyStop(false);
+  controller.setEmergencyStop(false, true);
   assert.equal(controller.state.emergencyStopActive, false);
   assert.match(controller.state.message, /approve or reject/i);
   assert.doesNotMatch(controller.state.message, /emergency stop is active/i);
@@ -295,7 +295,7 @@ test("run stays disabled until current approval and a confirmed clear stop", () 
     controls: new FakeNode(), approve: new FakeNode("button"), reject: new FakeNode("button"),
     runControls: new FakeNode(), run: new FakeNode("button"), message: new FakeNode(),
   };
-  const approved = { status: "approved", busy: false, emergencyStopActive: false, executionAvailable: true, message: "Approved.", receipt: { proposalId: "proposal-1", expiresAt: "2030-01-01T00:00:00Z" }, recommendation: workflow.normalizeRecommendation(response) };
+  const approved = { status: "approved", busy: false, emergencyStopActive: false, emergencyStopConfirmedClear: true, executionAvailable: true, message: "Approved.", receipt: { proposalId: "proposal-1", expiresAt: "2030-01-01T00:00:00Z" }, recommendation: workflow.normalizeRecommendation(response) };
   workflow.renderProposalState(elements, approved, false);
   assert.equal(elements.run.disabled, true);
   assert.equal(elements.runControls.hidden, true);
@@ -316,7 +316,7 @@ test("run requires native confirmation and sends only the stored exact proposal"
     now: () => Date.parse("2029-01-01T00:00:00Z"),
     confirmRun: () => false,
   });
-  controller.setEmergencyStop(false);
+  controller.setEmergencyStop(false, true);
   controller.load(workflow.normalizeRecommendation(response));
   await controller.decide("approve");
   assert.equal(controller.state.executionAvailable, true);
@@ -331,7 +331,7 @@ test("run requires native confirmation and sends only the stored exact proposal"
 test("approval completion cannot overwrite a newer proposal generation", async () => {
   let resolveApproval;
   const controller = new workflow.ProposalWorkflow({ api: { approveProposal: () => new Promise((resolve) => { resolveApproval = resolve; }) }, now: () => Date.parse("2029-01-01T00:00:00Z") });
-  controller.setEmergencyStop(false);
+  controller.setEmergencyStop(false, true);
   controller.load(workflow.normalizeRecommendation(response));
   const pending = controller.decide("approve");
   const replacement = structuredClone(response);
@@ -343,6 +343,33 @@ test("approval completion cannot overwrite a newer proposal generation", async (
   assert.equal(controller.state.recommendation.proposal.id, "proposal-2");
   assert.equal(controller.state.status, "pending");
   assert.equal(controller.state.executionAvailable, false);
+});
+
+test("run revalidates the exact approval after native confirmation before dispatch", async () => {
+  const approvedReceipt = { proposal_id: "proposal-1", status: "approved", approval_id: "approval-1", expires_at: "2030-01-01T00:00:00Z" };
+  for (const invalidateDuringConfirm of [
+    (_controller, advance) => { advance(); },
+    (controller) => { controller.setEmergencyStop(true, false); },
+  ]) {
+    let now = Date.parse("2029-01-01T00:00:00Z");
+    let calls = 0;
+    const controller = new workflow.ProposalWorkflow({
+      api: {
+        approveProposal: async () => approvedReceipt,
+        runProposal: async () => { calls += 1; return executionResult(); },
+      },
+      now: () => now,
+      confirmRun: () => {
+        invalidateDuringConfirm(controller, () => { now = Date.parse("2031-01-01T00:00:00Z"); });
+        return true;
+      },
+    });
+    controller.setEmergencyStop(false, true);
+    controller.load(workflow.normalizeRecommendation(response));
+    await controller.decide("approve");
+    assert.equal(await controller.run(), false);
+    assert.equal(calls, 0);
+  }
 });
 
 test("execution result normalization requires the exact fixed result union and approved scope", () => {

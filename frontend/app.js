@@ -94,7 +94,7 @@ const proposalWorkflow = new ProposalWorkflow({
 const emergencyStopWorkflow = new EmergencyStopWorkflow({
   api,
   onChange: (state) => {
-    proposalWorkflow.setEmergencyStop(state.active);
+    proposalWorkflow.setEmergencyStop(state.active, state.status === "clear");
     renderEmergencyStop(emergencyElements, state);
   },
 });
@@ -130,6 +130,7 @@ function renderSetup(state) {
     return card;
   }));
   setupElements.refresh.disabled = Boolean(state.busy);
+  setupElements.component.disabled = Boolean(state.busy);
   setupElements.repair.disabled = Boolean(state.busy);
   setupElements.cancel.disabled = Boolean(state.busy && state.busy !== setupElements.component.value);
 }
@@ -235,7 +236,7 @@ setupElements.repair.addEventListener("click", () => {
   const component = setupElements.component.value;
   if (window.confirm(`Repair ${component}? This may download or configure the fixed local component.`)) setupController.repair(component);
 });
-setupElements.cancel.addEventListener("click", () => setupController.cancel(setupElements.component.value));
+setupElements.cancel.addEventListener("click", () => setupController.cancel(setupController.state.busy || setupElements.component.value));
 diagnosticsButton.addEventListener("click", refreshDiagnostics);
 
 async function refreshOversight() {

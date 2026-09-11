@@ -49,3 +49,24 @@ test("setup refresh fails closed and cancellation stays component scoped", async
   assert.equal(controller.state.components.model.code, "CANCEL_REQUESTED");
   assert(updates.length > 0);
 });
+
+test("setup cancellation follows the active repair when selection changes", async () => {
+  let finishRepair;
+  const cancellations = [];
+  const controller = new SetupController({
+    api: {
+      repairSetup: async () => new Promise((resolve) => { finishRepair = resolve; }),
+      cancelSetup: async (component) => {
+        cancellations.push(component);
+        return { status: "in_progress", code: "CANCEL_REQUESTED", detail: `Stopping ${component}.` };
+      },
+    },
+  });
+  const repair = controller.repair("kali");
+  assert.equal(controller.state.busy, "kali");
+  assert.equal(await controller.cancel("model"), true);
+  assert.deepEqual(cancellations, ["kali"]);
+  assert.match(controller.state.message, /model.*kali/i);
+  finishRepair(setup.components.kali);
+  await repair;
+});
