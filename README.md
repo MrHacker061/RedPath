@@ -271,6 +271,16 @@ python3 ~/lab_scanner.py 192.168.56.20 --ports 22 --authorized \
 This option does not guess credentials, exploit a service, accept arbitrary
 remote commands, change the Windows VM, or establish a reverse shell.
 
+## RedPath Python VM integration
+
+[`redpath_kali/vm.py`](./redpath_kali/vm.py) exposes only status, start,
+dynamic SSH configuration discovery, and graceful stop. It does not expose
+free-form guest commands or forced power-off. Starts and stops are independently
+verified, and tests inject recorded process output without touching the real VM.
+SSH discovery accepts only `127.0.0.1` and the existing regular private key
+under RedPath's managed Vagrant state. The returned client options disable
+password prompts, keyboard-interactive login, and SSH-agent fallback.
+
 ## State and files
 
 The VM source and configuration stay together in the `vm` folder. Machine-specific Vagrant state,
