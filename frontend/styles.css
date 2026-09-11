@@ -44,7 +44,9 @@ section { scroll-margin-top: 1rem; }
 .health-card p { color: var(--muted); }
 .status-badge { background: var(--surface-raised); border-radius: 2rem; color: var(--warning); font-size: .78rem; font-weight: 800; padding: .25rem .6rem; }
 .status-badge[data-state="healthy"] { background: var(--accent-dark); color: var(--accent); }
+.status-badge[data-state="standby"] { background: #273e48; color: #9addf5; }
 .status-badge[data-state="offline"] { color: var(--offline); }
+.status-badge[data-state="unknown"] { color: var(--offline); }
 .status-badge[data-state="error"] { background: #451c1c; color: var(--error); }
 .detail { color: var(--muted); font-size: .9rem; margin-bottom: 0; }
 .notice { border-left: 4px solid var(--warning); margin-bottom: 1rem; padding: .65rem 1rem; }

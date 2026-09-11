@@ -31,8 +31,12 @@ Important project documents:
 ## Frontend dashboard
 
 The Milestone 1 dashboard is a dependency-free HTML, CSS, and JavaScript shell.
-It expects a same-origin `GET /api/health` endpoint and displays the current
-FastAPI, Ollama, and headless Kali status with clear loading and failure states.
+It uses Worker 1's same-origin `GET /api/v1/health` endpoint. The current
+API-only response marks FastAPI as available and leaves Ollama and Kali as not
+reported. It also accepts the planned aggregate `{ "services": { ... } }`
+response without changing routes. Backend detail text is never displayed;
+stable status codes map to bounded frontend messages. Kali `poweroff`,
+`not_created`, and `stopped` states are shown as available on demand.
 
 Run it from the repository root with Python:
 
