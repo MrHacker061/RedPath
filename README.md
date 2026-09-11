@@ -9,6 +9,7 @@ direct command execution.
 
 ```text
 docs/       RedPath context, architecture, connections, and implementation tasks
+frontend/   Dependency-free student dashboard shell and shared API client
 scanner/    Authorized private-lab Python scanner
 tests/      Python scanner tests and PowerShell VM tests
 vm/         Headless Kali manager, Vagrant configuration, and provisioning
@@ -26,6 +27,28 @@ Important project documents:
 - [System layout](./docs/REDPATH_SYSTEM_MAP.md)
 - [Component connections](./docs/REDPATH_PROJECT_CONNECTIONS.md)
 - [Four-worker implementation tasks](./docs/REDPATH_IMPLEMENTATION_TASKS.md)
+
+## Frontend dashboard
+
+The Milestone 1 dashboard is a dependency-free HTML, CSS, and JavaScript shell.
+It expects a same-origin `GET /api/health` endpoint and displays the current
+FastAPI, Ollama, and headless Kali status with clear loading and failure states.
+
+Run it from the repository root with Python:
+
+```powershell
+python -m http.server 8080 --directory frontend
+```
+
+Then open `http://127.0.0.1:8080`. The health cards will show the expected
+offline state until FastAPI serves both the frontend and `/api/health`, or a
+development reverse proxy routes `/api` to the backend.
+
+Run its dependency-free tests with Node.js 18 or newer:
+
+```powershell
+node --test frontend/tests/*.test.js
+```
 
 ## Headless Kali terminal
 
