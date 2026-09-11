@@ -44,11 +44,14 @@ EMERGENCY_STOP_ID = "local-redpath-service"
 APPROVAL_TTL = timedelta(minutes=15)
 MAX_REPORT_ITEMS = 100
 SAFE_AUDIT_KEYS = frozenset({
+    "action_id",
     "approval_id",
     "authorization_confirmed",
+    "cleanup_status",
     "code",
     "content_hash",
     "expires_at",
+    "exit_code",
     "finding_count",
     "policy_code",
     "policy_decision_id",
