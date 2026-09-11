@@ -29,13 +29,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = config
     app.state.engine = engine
     app.state.session_factory = session_factory
-    def parse_import(xml_text: str, session_id: str, target_id: str, scan_import_id: str):
+    def parse_import(xml_text: str, session_id: str, target_id: str, scan_import_id: str, target_address: str):
         result = parse_nmap_xml_bytes(
             xml_text.encode("utf-8"), scan_id=scan_import_id,
             session_id=session_id, target_id=target_id,
             max_bytes=1_000_000,
         )
-        return [finding.model_copy(update={"evidence_source": scan_import_id}) for finding in result.findings]
+        if len(result.hosts) != 1 or target_address not in result.hosts[0].addresses:
+            raise ValueError("Imported evidence must contain exactly the authorized target")
+        return result.findings
 
     app.state.nmap_parser = parse_import
     app.include_router(session_router)

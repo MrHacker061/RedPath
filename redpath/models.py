@@ -94,6 +94,7 @@ class Finding(Timestamped, Base):
     session_id: Mapped[str] = mapped_column(ForeignKey("lab_sessions.id"))
     target_id: Mapped[str] = mapped_column(String(36))
     scan_import_id: Mapped[str] = mapped_column(String(36))
+    evidence_ref: Mapped[str] = mapped_column(String(160))
     state: Mapped[str] = mapped_column(String(20), default=EvidenceState.OBSERVED.value)
     category: Mapped[str] = mapped_column(String(80))
     protocol: Mapped[str] = mapped_column(String(8))

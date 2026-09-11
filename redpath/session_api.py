@@ -1,6 +1,7 @@
 import hashlib
 import ipaddress
 import json
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -30,7 +31,7 @@ from redpath_ai import LearningResponse, explain_findings
 from redpath_ai.schemas import EvidenceState as AIEvidenceState, Finding as AIFinding
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
-Parser = Callable[[str, str, str, str], list[dict[str, Any]]]
+Parser = Callable[[str, str, str, str, str], list[dict[str, Any]]]
 
 
 def get_db(request: Request):
@@ -191,18 +192,25 @@ def import_scan(session_id: str, payload: ScanImportRequest, request: Request, d
     db.add(imported)
     db.flush()
     try:
-        parsed = parser(payload.xml_text, item.id, target.id, imported.id)
-        normalized = [NormalizedFinding.model_validate(value) for value in parsed]
-        if any(finding.session_id != item.id or finding.target_id != target.id or finding.evidence_source != imported.id for finding in normalized):
+        parsed = parser(payload.xml_text, item.id, target.id, imported.id, target.address)
+        normalized = []
+        for value in parsed:
+            finding = NormalizedFinding.model_validate(value)
+            normalized.append(finding.model_copy(update={"id": str(uuid.uuid5(uuid.UUID(imported.id), finding.id))}))
+        if any(finding.session_id != item.id or finding.target_id != target.id for finding in normalized):
             raise ValueError("Parser returned findings outside the import scope")
     except (ValueError, TypeError) as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail="Nmap XML could not be parsed safely") from exc
     for finding in normalized:
         data = finding.model_dump()
-        db.add(Finding(id=data["id"], session_id=item.id, target_id=target.id, scan_import_id=imported.id, state=data["state"].value, category=data["category"], protocol=data["protocol"], port=data["port"], service_hint=data["service_hint"]))
+        db.add(Finding(id=data["id"], session_id=item.id, target_id=target.id, scan_import_id=imported.id, evidence_ref=data["evidence_source"], state=data["state"].value, category=data["category"], protocol=data["protocol"], port=data["port"], service_hint=data["service_hint"]))
     audit(db, item.id, "scan_import.created", scan_import_id=imported.id, finding_count=len(normalized), content_hash=digest)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Nmap XML produced conflicting findings") from exc
     return ScanImportResponse(scan_import=ScanImportContract(id=imported.id, source_type=imported.source_type, content_hash=imported.content_hash, created_at=imported.created_at), findings=normalized)
 
 
@@ -214,7 +222,7 @@ def explain_session_findings(session_id: str, db: Session = Depends(get_db)) -> 
         id=value.id, session_id=value.session_id, target_id=value.target_id,
         state=AIEvidenceState(value.state), category=value.category, protocol=value.protocol,
         port=value.port, service_hint=value.service_hint,
-        evidence_source=value.scan_import_id,
+        evidence_source=value.evidence_ref,
     ) for value in stored]
     response = explain_findings(findings)
     audit(db, item.id, "learning.explanation.generated", finding_count=len(findings), source_ids=sorted({source for explanation in response.explanations for source in explanation.source_ids}))

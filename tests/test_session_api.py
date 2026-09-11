@@ -105,11 +105,33 @@ def test_real_parser_completes_evidence_only_flow(client):
     assert finding["session_id"] == session["id"]
     assert finding["target_id"] == target["id"]
     assert finding["state"] == "observed"
-    assert finding["evidence_source"] == response.json()["scan_import"]["id"]
+    assert finding["evidence_source"].startswith("nmap:")
     explanation = client.get(f"/api/v1/sessions/{session['id']}/explanation")
     assert explanation.status_code == 200
     assert explanation.json()["execution_authorized"] is False
     assert explanation.json()["explanations"][0]["finding_id"] == finding["id"]
+
+
+def test_real_parser_rejects_foreign_and_multi_host_evidence(client):
+    session = create_session(client)
+    add_target(client, session["id"])
+    route = f"/api/v1/sessions/{session['id']}/scan-import"
+    foreign = '<nmaprun><host><address addr="8.8.8.8"/><ports><port protocol="tcp" portid="80"><state state="open"/></port></ports></host></nmaprun>'
+    assert client.post(route, json={"filename": "foreign.xml", "xml_text": foreign}).status_code == 422
+    multi = '<nmaprun><host><address addr="192.168.56.20"/></host><host><address addr="192.168.56.21"/></host></nmaprun>'
+    assert client.post(route, json={"filename": "multi.xml", "xml_text": multi}).status_code == 422
+
+
+def test_reimporting_same_xml_uses_new_finding_ids_and_stable_evidence_refs(client):
+    session = create_session(client)
+    add_target(client, session["id"])
+    xml = (Path(__file__).parent / "fixtures" / "nmap_sample.xml").read_text(encoding="utf-8")
+    route = f"/api/v1/sessions/{session['id']}/scan-import"
+    first = client.post(route, json={"filename": "first.xml", "xml_text": xml})
+    second = client.post(route, json={"filename": "second.xml", "xml_text": xml})
+    assert first.status_code == second.status_code == 201
+    assert first.json()["findings"][0]["id"] != second.json()["findings"][0]["id"]
+    assert first.json()["findings"][0]["evidence_source"] == second.json()["findings"][0]["evidence_source"]
 
 
 def test_scan_import_uses_bounded_parser_contract_and_persists_findings(client, app):
@@ -117,15 +139,15 @@ def test_scan_import_uses_bounded_parser_contract_and_persists_findings(client, 
     target = add_target(client, session["id"]).json()
     calls = []
 
-    def parser(xml_text, session_id, target_id, scan_import_id):
-        calls.append((xml_text, session_id, target_id, scan_import_id))
-        return [{"id": "finding-1", "session_id": session_id, "target_id": target_id, "state": "observed", "category": "open_port", "protocol": "tcp", "port": 80, "service_hint": "http", "evidence_source": scan_import_id}]
+    def parser(xml_text, session_id, target_id, scan_import_id, target_address):
+        calls.append((xml_text, session_id, target_id, scan_import_id, target_address))
+        return [{"id": "finding-1", "session_id": session_id, "target_id": target_id, "state": "observed", "category": "open_port", "protocol": "tcp", "port": 80, "service_hint": "http", "evidence_source": "nmap:stable:port:80"}]
 
     app.state.nmap_parser = parser
     response = client.post(f"/api/v1/sessions/{session['id']}/scan-import", json={"filename": "owned-lab.xml", "xml_text": "<nmaprun/>"})
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["findings"][0]["evidence_source"] == body["scan_import"]["id"]
+    assert body["findings"][0]["evidence_source"] == "nmap:stable:port:80"
     assert calls[0][1:3] == (session["id"], target["id"])
     with app.state.session_factory() as db:
         assert len(db.scalars(select(ScanImport)).all()) == 1
@@ -140,7 +162,7 @@ def test_scan_import_rejects_bad_filename_oversize_and_invalid_parser_output(cli
     assert client.post(route, json={"filename": "scan.xml", "xml_text": "x" * 1_000_001}).status_code == 422
     app.state.nmap_parser = lambda *_: [{"command": "whoami"}]
     assert client.post(route, json={"filename": "scan.xml", "xml_text": "<x/>"}).status_code == 422
-    app.state.nmap_parser = lambda _xml, _session, target, scan: [{"id": "finding-2", "session_id": "different-session", "target_id": target, "state": "observed", "category": "open_port", "protocol": "tcp", "port": 22, "service_hint": "ssh", "evidence_source": scan}]
+    app.state.nmap_parser = lambda _xml, _session, target, _scan, _address: [{"id": "finding-2", "session_id": "different-session", "target_id": target, "state": "observed", "category": "open_port", "protocol": "tcp", "port": 22, "service_hint": "ssh", "evidence_source": "nmap:stable:port:22"}]
     assert client.post(route, json={"filename": "scan.xml", "xml_text": "<x/>"}).status_code == 422
     with app.state.session_factory() as db:
         assert db.scalar(select(ScanImport)) is None

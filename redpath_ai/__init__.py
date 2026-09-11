@@ -37,4 +37,4 @@ __all__ = [
 ]
 from .learning import LearningResponse, explain_findings, retrieve_notes
 
-__all__ = ["LearningResponse", "explain_findings", "retrieve_notes"]
+__all__ += ["LearningResponse", "explain_findings", "retrieve_notes"]
