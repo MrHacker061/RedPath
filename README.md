@@ -8,12 +8,35 @@ direct command execution.
 ## Repository layout
 
 ```text
+redpath/    FastAPI backend, strict shared contracts, and SQLite models
 docs/       RedPath context, architecture, connections, and implementation tasks
 scanner/    Authorized private-lab Python scanner
 tests/      Python scanner tests and PowerShell VM tests
 vm/         Headless Kali manager, Vagrant configuration, and provisioning
 .local/     Generated machine-specific files; ignored by Git
 ```
+
+## Backend foundation
+
+The backend binds to localhost and currently exposes only a health check. It
+defines strict shared contracts and the initial SQLite data model. It does not
+execute tools or accept model-generated commands.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e ".[test]"
+.\.venv\Scripts\python -m pytest tests\test_backend_foundation.py
+.\.venv\Scripts\redpath-api.exe
+```
+
+Copy `.env.example` to `.env` for local overrides. The `.env` file is ignored.
+The supported launcher rejects any non-loopback `REDPATH_HOST`. AI proposals are
+untrusted wire data and must pass `validate_untrusted_proposal`, policy review,
+and exact user approval before any later execution component may use them.
+Approval creation must store `action_protected_hash(validated_proposal)`. The
+executor must call `revalidate_approval_before_execution` immediately before
+running an action so changes to its name or arguments fail closed. The database
+also binds each action to the exact approval, proposal, and session tuple.
 
 The files in `docs`, `scanner`, `tests`, and `vm`, along with this README,
 `.gitignore`, and `.gitattributes`, belong in GitHub. Do not add `.local`,
