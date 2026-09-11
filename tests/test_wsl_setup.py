@@ -3,12 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
+from typing import get_args
 from unittest.mock import patch
 
 import pytest
 
 from redpath_kali import ProcessResult
-from redpath_setup.manifest import KALI_ARTIFACT
+from redpath_setup.manifest import Artifact, KALI_ARTIFACT
 
 
 class RecordingRunner:
@@ -129,11 +130,12 @@ def test_enable_treats_exit_3010_as_restart_required_before_generic_failure(tmp_
 
 
 def test_enable_does_not_mistake_no_restart_required_for_a_pending_restart(tmp_path):
+    from redpath_setup import wsl
     from redpath_setup.wsl import WslSetup
 
     runner = RecordingRunner(
         [
-            ProcessResult(0, redirected_utf16("No restart required.\r\n")),
+            ProcessResult(0, "No restart required.\n"),
             ProcessResult(0, "Default Version: 2\n"),
             ProcessResult(0, ""),
         ]
@@ -141,6 +143,7 @@ def test_enable_does_not_mistake_no_restart_required_for_a_pending_restart(tmp_p
     stage = WslSetup(tmp_path, runner=runner).enable(True)
     assert stage.code == "KALI_NOT_INSTALLED"
     assert len(runner.calls) == 3
+    assert wsl._restart_pending(ProcessResult(0, redirected_utf16("No restart required.\r\n"))) is False
 
 
 def test_kali_import_uses_the_pinned_artifact_managed_name_and_fixed_marker_command(tmp_path):
@@ -233,6 +236,34 @@ def test_run_in_kali_rejects_untyped_malformed_or_unbounded_inputs_before_wsl(tm
     with pytest.raises(WslSetupError):
         WslSetup(tmp_path, runner=runner).run_in_kali(arguments, timeout=timeout)
     assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        0,
+        61,
+        pytest.param(10**10000, id="huge_integer"),
+    ],
+)
+def test_timeout_rejection_is_bounded_and_uses_the_exact_range_message(tmp_path, timeout):
+    from redpath_setup.wsl import WslSetup, WslSetupError
+
+    runner = RecordingRunner()
+    with pytest.raises(WslSetupError, match="greater than 0 and at most 60"):
+        WslSetup(tmp_path, runner=runner).run_in_kali(["printf", "ok"], timeout=timeout)
+    assert runner.calls == []
+
+
+def test_downloader_type_contract_accepts_the_concrete_artifact_model():
+    from redpath_setup import wsl
+
+    parameters, return_type = get_args(wsl.Downloader)
+    assert parameters[0] is Artifact
+    assert return_type is Path
 
 
 def test_default_runner_uses_argument_array_without_a_shell(tmp_path):

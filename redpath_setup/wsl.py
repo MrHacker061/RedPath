@@ -234,8 +234,14 @@ class WslSetup:
     def run_in_kali(self, arguments: Sequence[str], timeout: float) -> ProcessResult:
         """Execute a prevalidated fixed action in the owned Kali distribution."""
         argv = _valid_arguments(arguments)
-        if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= MAX_ACTION_TIMEOUT_SECONDS:
-            raise WslSetupError("Kali timeout must be a finite number from 0 through 60 seconds")
+        if type(timeout) is int:
+            timeout_valid = 0 < timeout <= MAX_ACTION_TIMEOUT_SECONDS
+        elif type(timeout) is float:
+            timeout_valid = math.isfinite(timeout) and 0 < timeout <= MAX_ACTION_TIMEOUT_SECONDS
+        else:
+            timeout_valid = False
+        if not timeout_valid:
+            raise WslSetupError("Kali timeout must be finite, greater than 0 and at most 60 seconds")
         stage = self.inspect()
         if stage.code != "KALI_READY":
             raise WslSetupError("managed Kali distribution is not ready")
