@@ -33,6 +33,16 @@ class ProviderUnavailableError(ProviderError):
     """The local provider could not be reached within its bounded request."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Reject redirects so Ollama requests cannot leave the validated endpoint."""
+
+    def redirect_request(
+        self, req: urllib.request.Request, fp: Any, code: int,
+        msg: str, headers: Any, newurl: str,
+    ) -> None:
+        return None
+
+
 class LLMProvider(ABC):
     """Recommendation and explanation contract; deliberately cannot execute actions."""
 
@@ -255,8 +265,9 @@ class OllamaProvider(LLMProvider):
             headers={"Content-Type": "application/json"},
             method="GET" if body is None else "POST",
         )
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with opener.open(request, timeout=timeout) as response:
                 raw = response.read(1_000_001)
                 if len(raw) > 1_000_000:
                     raise ProviderError("Ollama response exceeded size limit")
