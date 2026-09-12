@@ -163,6 +163,27 @@ test("workflow marks an expired approval as non-executable", async () => {
   assert.equal(controller.state.status, "expired");
 });
 
+test("refreshing an expired approval clears the execution gate", async () => {
+  let currentTime = Date.parse("2027-01-01T00:00:00Z");
+  const api = { approveProposal: async () => ({
+    proposal_id: "proposal-1",
+    status: "approved",
+    approval_id: "approval-1",
+    expires_at: "2028-01-01T00:00:00Z",
+  }) };
+  const controller = new workflow.ProposalWorkflow({ api, now: () => currentTime });
+  controller.setEmergencyStop(false, true);
+  controller.load(workflow.normalizeRecommendation(response));
+  await controller.decide("approve");
+  assert.equal(controller.state.executionAvailable, true);
+
+  currentTime = Date.parse("2029-01-01T00:00:00Z");
+  controller.refreshExpiration();
+
+  assert.equal(controller.state.status, "expired");
+  assert.equal(controller.state.executionAvailable, false);
+});
+
 test("workflow records rejection and does not expose an execution action", async () => {
   const api = { rejectProposal: async () => ({ proposal_id: "proposal-1", status: "rejected", approval_id: null, expires_at: null }) };
   const controller = new workflow.ProposalWorkflow({ api });

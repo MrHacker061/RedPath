@@ -249,7 +249,7 @@ export class ProposalWorkflow {
 
   refreshExpiration() {
     if (this.state.status === "approved" && Date.parse(this.state.receipt?.expiresAt) <= this.now()) {
-      this.state = { ...this.state, status: "expired", message: "The approval has expired. It cannot be executed." };
+      this.state = { ...this.state, status: "expired", executionAvailable: false, message: "The approval has expired. It cannot be executed." };
       this.emit();
     }
   }
