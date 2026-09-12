@@ -124,7 +124,7 @@ export class ProposalWorkflow {
     this.api = api;
     this.now = now;
     this.onChange = onChange;
-    this.state = { status: "idle", busy: false, message: "No recommendation requested.", executionAvailable: false, emergencyStopActive: true };
+    this.state = { status: "idle", busy: false, message: "No recommendation requested.", emergencyStopActive: true };
   }
 
   load(recommendation) {
@@ -136,7 +136,6 @@ export class ProposalWorkflow {
       message: status === "pending"
         ? pendingProposalMessage(emergencyStopActive)
         : "Policy rejected this proposal. It cannot be approved or executed.",
-      executionAvailable: false,
       emergencyStopActive,
       recommendation,
       receipt: null,
@@ -162,7 +161,6 @@ export class ProposalWorkflow {
         status,
         busy: false,
         receipt,
-        executionAvailable: false,
         message: status === "approved"
           ? "Approved for this exact action and arguments. Execution is not available in this frontend."
           : status === "expired"
@@ -174,7 +172,6 @@ export class ProposalWorkflow {
         ...this.state,
         status: "error",
         busy: false,
-        executionAvailable: false,
         message: "The proposal decision could not be saved. Request a fresh recommendation before trying again.",
       };
     }
@@ -184,7 +181,7 @@ export class ProposalWorkflow {
 
   refreshExpiration() {
     if (this.state.status === "approved" && Date.parse(this.state.receipt?.expiresAt) <= this.now()) {
-      this.state = { ...this.state, status: "expired", executionAvailable: false, message: "The approval has expired. It cannot be executed." };
+      this.state = { ...this.state, status: "expired", message: "The approval has expired. It cannot be executed." };
       this.emit();
     }
   }
