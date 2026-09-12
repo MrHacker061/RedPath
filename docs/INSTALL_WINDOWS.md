@@ -65,9 +65,13 @@ control. On a host where WSL status probes time out, a refresh can take over a
 minute; wait for the returned component status before attempting repair.
 
 RedPath uses local Ollama by default at `http://127.0.0.1:11434` with
-`qwen2.5:7b-instruct-q4_K_M`. It validates model output against the allowed
-actions and falls back to deterministic local recommendations if Ollama is
-unavailable or its output remains invalid after bounded attempts. A successful
+`qwen2.5:7b-instruct-q4_K_M`. Its private HTTP transport disables ambient and
+system proxies and rejects every redirect, including redirects to loopback.
+It validates model output against the allowed actions and falls back to
+deterministic local recommendations if Ollama is unavailable, returns a
+redirect, or its output remains invalid after bounded attempts. The corrected
+unsigned candidate is bound to transport-fix commit
+`c828f078b1315d8ed0c20fa619a04872e953bb2c` in the release checklist. A successful
 recommendation therefore does not prove the model was available.
 
 You can still review imported evidence when components need attention. A Ready
