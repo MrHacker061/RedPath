@@ -12,17 +12,27 @@ MVP accepts private, authorized lab targets and its fixed learning actions only;
 it does not provide a command shell, credential testing, public-target testing,
 or exploitation automation.
 
-Have sufficient free space before setup. The model and managed Kali image are
-large downloads, but the current API, manifest, and UI do not expose an exact
-download-size field before consent. There is no source-bound numeric size to
-publish in this guide. This is a release blocker recorded in the checklist;
-confirm exact transfer and storage requirements only from the final pinned
-release artifacts until the UI exposes them.
+Setup discloses these download sizes before repair consent:
+
+| Component | Version or model | Exact disclosed bytes | Displayed size |
+| --- | --- | --- | --- |
+| Ollama installer | 0.34.0 | 1,574,272,976 | 1.47 GiB |
+| Local model | `qwen2.5:7b-instruct-q4_K_M` | 4,683,087,332 | 4.36 GiB |
+| Managed Kali image | 2026.2 | 247,857,686 | 236.38 MiB |
+| WSL2 | Managed by Windows | Unknown (`null` in the API) | No size shown |
+
+These are transfer sizes, not installed disk-space requirements. Allow extra
+space for installation, model storage, and the managed environment. Ollama and
+Kali artifact downloads are checked against their pinned byte counts and
+SHA-256 values. The model size is fixed setup metadata; a real model pull and
+its storage requirements remain a release-verification gate.
 
 ## Install
 
-1. Obtain `RedPath-Setup-0.1.0-x64.exe` from an authorized release.
-2. Verify the release-provided SHA-256 before opening it. For example:
+1. Obtain `RedPath-Setup-0.1.0-x64.exe` from an authorized source. The current
+   candidate is a local unsigned development build, not a published release.
+2. Verify the candidate's SHA-256 against the [release checklist](MVP_RELEASE_CHECKLIST.md)
+   before opening it. For example:
 
    ```powershell
    Get-FileHash .\RedPath-Setup-0.1.0-x64.exe -Algorithm SHA256
@@ -32,10 +42,10 @@ release artifacts until the UI exposes them.
    desktop shortcut.
 4. Let the installer open RedPath.
 
-Development artifacts are **unsigned** unless the release checklist says
-otherwise. Windows may show a publisher or reputation warning for an unsigned
-development build. Do not bypass a warning unless you independently verified
-the source and installer hash.
+The current executable and installer are **unsigned**. Windows may show a
+publisher or reputation warning for an unsigned development build. Stop if
+Windows blocks the artifact; this guide does not authorize bypassing security
+warnings or changing Windows security policy.
 
 ## Check and repair local components
 
@@ -47,18 +57,24 @@ repair is in progress, the UI offers **Cancel** for that active component.
 
 WSL2 may require an administrator-approved Windows prompt and may require a
 restart. Restart RedPath after Windows restarts, then use **Refresh setup**.
-The current UI does not display a downloadable artifact's pinned version,
-checksum, or byte size, and it does not provide a separate Retry or View
-Details control. Do not infer those details from a component card.
+Component cards display the pinned version or model name and a rounded
+download size after status loads. Repair stays disabled while metadata is
+loading or unavailable. WSL2 has no fixed download-size disclosure. The UI does
+not display artifact checksums or provide a separate Retry or View Details
+control. On a host where WSL status probes time out, a refresh can take over a
+minute; wait for the returned component status before attempting repair.
 
-You can still review imported evidence when the model or managed Kali component
-needs attention. However, the current MVP does not use setup health as a
-recommendation or execution gate: `create_app()` selects `RuleBasedProvider`,
-so recommendations are deterministic and independent of model health, and run
-controls check only an exact approval plus a clear emergency stop. This differs
-from the intended model-backed, health-gated workflow and is a release blocker.
-Do not treat a Ready component card as proof that recommendation or execution
-is health-gated.
+RedPath uses local Ollama by default at `http://127.0.0.1:11434` with
+`qwen2.5:7b-instruct-q4_K_M`. It validates model output against the allowed
+actions and falls back to deterministic local recommendations if Ollama is
+unavailable or its output remains invalid after bounded attempts. A successful
+recommendation therefore does not prove the model was available.
+
+You can still review imported evidence when components need attention. A Ready
+card does not grant action approval or guarantee an action will run. Execution
+still requires an exact approval, a clear emergency stop, and the managed
+Kali checks. Real-model recommendations and the complete authorized-lab
+workflow remain unverified release gates.
 
 ## Use the guided lab workflow
 
