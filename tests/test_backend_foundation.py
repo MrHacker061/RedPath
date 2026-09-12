@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +13,7 @@ from redpath.action_registry import (
 )
 from redpath.app import create_app
 from redpath.config import Settings
-from redpath.contracts import AIProposal, NormalizedFinding
+from redpath.contracts import AIProposal, ActionResultContract, NormalizedFinding
 from redpath.database import Base
 from redpath.models import Action, Approval, AuthorizedTarget, Finding, LabSession, Proposal, ScanImport
 
@@ -62,6 +62,20 @@ def test_ai_proposal_always_requires_approval():
         AIProposal.model_validate(proposal | {"shell": "arbitrary"})
 
 
+def test_action_result_contract_rejects_raw_or_unregistered_evidence():
+    result = {
+        "action_id": "action-1",
+        "status": "completed",
+        "exit_code": 0,
+        "parser": "http_headers_v1",
+        "cleanup_status": "completed",
+    }
+    with pytest.raises(ValidationError):
+        ActionResultContract.model_validate(
+            result | {"evidence": [{"kind": "stdout", "text": "SECRET"}]}
+        )
+
+
 def test_registry_validates_untrusted_action_values_and_backend_references():
     proposal = AIProposal.model_validate({"finding_ids": ["finding-12"], "action_name": "inspect_http_headers", "arguments": {"target_id": "target-3", "port": 80}, "reason": "Inspect an observed service.", "learning_goal": "Understand HTTP headers.", "requires_approval": True})
     validated = validate_untrusted_proposal(
@@ -84,21 +98,63 @@ def test_registry_validates_untrusted_action_values_and_backend_references():
     with pytest.raises(ValidationError):
         validate_untrusted_proposal(extra, authorized_target_id="target-3", available_finding_ids={"finding-12"})
 
-    approved_hash = action_protected_hash(validated)
+    scope = {
+        "session_id": "session-1",
+        "target_id": "target-3",
+        "target_address": "192.168.56.20",
+        "proposal_id": "proposal-1",
+    }
+    approval_state = {
+        "approval_status": "approved",
+        "approval_expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+        "approval_used_at": None,
+        "emergency_stop_active": False,
+    }
+    approved_hash = action_protected_hash(validated, **scope)
     revalidate_approval_before_execution(
-        validated, approved_protected_hash=approved_hash
+        validated, approved_protected_hash=approved_hash, **scope, **approval_state
     )
     changed = validated.model_copy(
         update={"arguments": {"target_id": "target-3", "port": 443}}
     )
     with pytest.raises(ValueError, match="exact approved name and arguments"):
         revalidate_approval_before_execution(
-            changed, approved_protected_hash=approved_hash
+            changed,
+            approved_protected_hash=approved_hash,
+            **scope,
+            **approval_state,
         )
     changed_name = validated.model_copy(update={"action_name": "check_tcp_connection"})
     with pytest.raises(ValueError, match="exact approved name and arguments"):
         revalidate_approval_before_execution(
-            changed_name, approved_protected_hash=approved_hash
+            changed_name,
+            approved_protected_hash=approved_hash,
+            **scope,
+            **approval_state,
+        )
+    with pytest.raises(ValueError, match="already been used"):
+        revalidate_approval_before_execution(
+            validated,
+            approved_protected_hash=approved_hash,
+            **scope,
+            **(approval_state | {"approval_used_at": datetime.now(timezone.utc)}),
+        )
+    with pytest.raises(ValueError, match="Emergency stop"):
+        revalidate_approval_before_execution(
+            validated,
+            approved_protected_hash=approved_hash,
+            **scope,
+            **(approval_state | {"emergency_stop_active": True}),
+        )
+    with pytest.raises(ValueError, match="expired"):
+        revalidate_approval_before_execution(
+            validated,
+            approved_protected_hash=approved_hash,
+            **scope,
+            **(
+                approval_state
+                | {"approval_expires_at": datetime.now(timezone.utc) - timedelta(seconds=1)}
+            ),
         )
 
 

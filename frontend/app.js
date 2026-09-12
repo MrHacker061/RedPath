@@ -1,4 +1,12 @@
 import { RedPathApi, normalizeFinding, normalizeHealth } from "./api.js";
+import { normalizeRecommendation, ProposalWorkflow, renderProposalState, renderRecommendation } from "./recommendation.js";
+import {
+  EmergencyStopWorkflow,
+  normalizeAuditHistory,
+  normalizeLearningReport,
+  renderEmergencyStop,
+  renderSessionOversight,
+} from "./oversight.js";
 
 const api = new RedPathApi();
 const refreshButton = document.querySelector("#refresh-health");
@@ -11,7 +19,79 @@ const evidenceMessage = document.querySelector("#evidence-message");
 const findingsBody = document.querySelector("#findings-body");
 const reportMessage = document.querySelector("#report-message");
 const explanations = document.querySelector("#explanations");
+const recommendationButton = document.querySelector("#request-recommendation");
+const recommendationMessage = document.querySelector("#recommendation-message");
+const recommendationElements = {
+  content: document.querySelector("#recommendation-content"),
+  heading: document.querySelector("#ai-recommendation-title"),
+  findingIds: document.querySelector("#recommendation-finding-ids"),
+  reason: document.querySelector("#recommendation-reason"),
+  learningGoal: document.querySelector("#recommendation-learning-goal"),
+  action: document.querySelector("#recommendation-action"),
+  arguments: document.querySelector("#recommendation-arguments"),
+  policyResult: document.querySelector("#policy-result"),
+  policyCode: document.querySelector("#policy-code"),
+  policyExplanation: document.querySelector("#policy-explanation"),
+};
+const proposalElements = {
+  controls: document.querySelector("#proposal-controls"),
+  approve: document.querySelector("#approve-proposal"),
+  reject: document.querySelector("#reject-proposal"),
+  message: document.querySelector("#proposal-state"),
+};
+const emergencyElements = {
+  activate: document.querySelector("#emergency-stop"),
+  clear: document.querySelector("#clear-emergency-stop"),
+  refresh: document.querySelector("#refresh-emergency-stop"),
+  message: document.querySelector("#emergency-stop-state"),
+};
+const oversightButton = document.querySelector("#refresh-oversight");
+const oversightMessage = document.querySelector("#oversight-message");
+const oversightElements = {
+  summary: document.querySelector("#report-summary"),
+  overview: document.querySelector("#report-overview"),
+  proposals: document.querySelector("#report-proposals"),
+  approvals: document.querySelector("#report-approvals"),
+  audit: document.querySelector("#audit-history"),
+  events: document.querySelector("#audit-events"),
+};
 let activeSessionId = null;
+let recommendationReady = false;
+let recommendationPending = false;
+let approvalTimer = null;
+
+const proposalWorkflow = new ProposalWorkflow({
+  api,
+  onChange: (state) => {
+    renderProposalState(proposalElements, state);
+    clearTimeout(approvalTimer);
+    if (state.status === "approved") {
+      const delay = Math.max(0, Date.parse(state.receipt.expiresAt) - Date.now());
+      approvalTimer = setTimeout(() => proposalWorkflow.refreshExpiration(), Math.min(delay + 25, 2_147_483_647));
+    }
+  },
+});
+
+const emergencyStopWorkflow = new EmergencyStopWorkflow({
+  api,
+  onChange: (state) => {
+    proposalWorkflow.setEmergencyStop(state.active);
+    renderEmergencyStop(emergencyElements, state);
+  },
+});
+
+renderEmergencyStop(emergencyElements, emergencyStopWorkflow.state);
+
+function resetRecommendation(text) {
+  clearTimeout(approvalTimer);
+  recommendationElements.content.hidden = true;
+  recommendationButton.disabled = true;
+  recommendationMessage.dataset.state = "";
+  recommendationMessage.textContent = text;
+  proposalElements.controls.hidden = true;
+  proposalElements.approve.disabled = true;
+  proposalElements.reject.disabled = true;
+}
 
 function setLoading(isLoading) {
   refreshButton.disabled = isLoading;
@@ -60,6 +140,40 @@ async function refreshHealth() {
 }
 
 refreshButton.addEventListener("click", refreshHealth);
+emergencyElements.activate.addEventListener("click", () => emergencyStopWorkflow.activate());
+emergencyElements.clear.addEventListener("click", () => emergencyStopWorkflow.clear());
+emergencyElements.refresh.addEventListener("click", () => emergencyStopWorkflow.refresh());
+
+async function refreshOversight() {
+  if (!activeSessionId || oversightButton.disabled) return;
+  oversightButton.disabled = true;
+  oversightButton.setAttribute("aria-busy", "true");
+  oversightMessage.dataset.state = "pending";
+  oversightMessage.textContent = "Loading the bounded learning report and audit history…";
+  try {
+    const sessionId = activeSessionId;
+    const [reportPayload, historyPayload] = await Promise.all([
+      api.getLearningReport(sessionId),
+      api.getAuditHistory(sessionId),
+    ]);
+    if (sessionId !== activeSessionId) throw new TypeError("Session changed.");
+    const report = normalizeLearningReport(reportPayload, sessionId);
+    const history = normalizeAuditHistory(historyPayload, sessionId);
+    renderSessionOversight(oversightElements, report, history);
+    oversightMessage.dataset.state = "healthy";
+    oversightMessage.textContent = "Latest bounded report and audit records loaded.";
+  } catch {
+    oversightElements.summary.hidden = true;
+    oversightElements.audit.hidden = true;
+    oversightMessage.dataset.state = "error";
+    oversightMessage.textContent = "RedPath could not load valid oversight records for this session.";
+  } finally {
+    oversightButton.disabled = !activeSessionId;
+    oversightButton.setAttribute("aria-busy", "false");
+  }
+}
+
+oversightButton.addEventListener("click", refreshOversight);
 
 sessionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -73,6 +187,13 @@ sessionForm.addEventListener("submit", async (event) => {
     await api.addLessonSource(session.id, { url: data.get("lesson_url"), title: data.get("objective") });
     await api.addTarget(session.id, { address: data.get("target"), authorization_source: "user_confirmation", expires_at: expiresAt });
     activeSessionId = session.id;
+    oversightElements.summary.hidden = true;
+    oversightElements.audit.hidden = true;
+    oversightButton.disabled = false;
+    oversightMessage.dataset.state = "";
+    oversightMessage.textContent = "Session created. Load the latest bounded report and audit records when needed.";
+    recommendationReady = false;
+    resetRecommendation("Import evidence before requesting a recommendation.");
     scanFile.disabled = false;
     scanForm.querySelector("button[type=submit]").disabled = false;
     sessionMessage.textContent = "Session created. You can now import evidence for the authorized target.";
@@ -87,6 +208,8 @@ scanForm.addEventListener("submit", async (event) => {
   if (!activeSessionId || !scanFile.files?.[0]) return;
   const submit = scanForm.querySelector("button[type=submit]");
   submit.disabled = true;
+  recommendationReady = false;
+  resetRecommendation("Importing new evidence before another recommendation can be requested.");
   evidenceMessage.textContent = "Importing and validating the scan…";
   try {
     const file = scanFile.files[0];
@@ -106,6 +229,11 @@ scanForm.addEventListener("submit", async (event) => {
       findingsBody.append(row);
     }
     evidenceMessage.textContent = `${findings.length} observed finding${findings.length === 1 ? "" : "s"} imported.`;
+    recommendationReady = findings.length > 0;
+    recommendationButton.disabled = !recommendationReady;
+    recommendationMessage.textContent = recommendationReady
+      ? "Evidence is ready. Request one policy-checked learning recommendation."
+      : "A recommendation needs at least one imported finding.";
     const learning = await api.getExplanation(activeSessionId);
     explanations.replaceChildren();
     for (const explanation of learning.explanations || []) {
@@ -126,4 +254,36 @@ scanForm.addEventListener("submit", async (event) => {
   finally { submit.disabled = false; }
 });
 
+recommendationButton.addEventListener("click", async () => {
+  if (!activeSessionId || !recommendationReady || recommendationPending) return;
+  recommendationPending = true;
+  recommendationButton.disabled = true;
+  recommendationButton.setAttribute("aria-busy", "true");
+  recommendationButton.textContent = "Requesting…";
+  recommendationMessage.dataset.state = "pending";
+  recommendationMessage.textContent = "Requesting an AI recommendation and an independent policy decision…";
+  recommendationElements.content.hidden = true;
+  try {
+    const recommendation = normalizeRecommendation(await api.requestRecommendation(activeSessionId), activeSessionId);
+    renderRecommendation(recommendationElements, recommendation);
+    proposalWorkflow.load(recommendation);
+    recommendationMessage.dataset.state = recommendation.policyDecision.allowed ? "approved" : "rejected";
+    recommendationMessage.textContent = recommendation.policyDecision.allowed
+      ? "Recommendation received. Review the exact proposal before deciding."
+      : "Recommendation received, but policy rejected the proposal.";
+  } catch {
+    recommendationMessage.dataset.state = "error";
+    recommendationMessage.textContent = "RedPath could not load a valid recommendation. Review the evidence and try again.";
+  } finally {
+    recommendationPending = false;
+    recommendationButton.disabled = !recommendationReady;
+    recommendationButton.setAttribute("aria-busy", "false");
+    recommendationButton.textContent = "Request recommendation";
+  }
+});
+
+proposalElements.approve.addEventListener("click", () => proposalWorkflow.decide("approve"));
+proposalElements.reject.addEventListener("click", () => proposalWorkflow.decide("reject"));
+
 refreshHealth();
+emergencyStopWorkflow.refresh();
