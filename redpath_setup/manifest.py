@@ -12,6 +12,7 @@ class Artifact:
     url: str
     sha256: str
     filename: str
+    size_bytes: int
 
     def __post_init__(self) -> None:
         if not self.name or not self.version:
@@ -22,6 +23,8 @@ class Artifact:
             raise ValueError("artifact SHA-256 must be 64 hexadecimal characters")
         if not self.filename or self.filename in {".", ".."} or any(c in self.filename for c in "/\\\x00"):
             raise ValueError("artifact filename must be a simple file name")
+        if type(self.size_bytes) is not int or self.size_bytes <= 0:
+            raise ValueError("artifact size must be a positive integer")
 
 
 OLLAMA_ARTIFACT = Artifact(
@@ -30,6 +33,7 @@ OLLAMA_ARTIFACT = Artifact(
     url="https://github.com/ollama/ollama/releases/download/v0.34.0/OllamaSetup.exe",
     sha256="e2b98770fb87f3b4c593c22f2e8eda59bcac1cd7b141f1388c4181a8bf271a72",
     filename="OllamaSetup.exe",
+    size_bytes=1_574_272_976,
 )
 
 KALI_ARTIFACT = Artifact(
@@ -38,4 +42,5 @@ KALI_ARTIFACT = Artifact(
     url="https://kali.download/wsl-images/kali-2026.2/kali-linux-2026.2-wsl-rootfs-amd64.wsl",
     sha256="1b172389e9109e9bb0c3d1fa18eda078271484dbcef8dbee4aab8b1f369466c6",
     filename="kali-linux-2026.2-wsl-rootfs-amd64.wsl",
+    size_bytes=247_857_686,
 )

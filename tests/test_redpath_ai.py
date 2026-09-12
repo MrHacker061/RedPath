@@ -1,6 +1,14 @@
 import json
+import io
+import os
 import unittest
+import urllib.request
+import urllib.response
+from contextlib import contextmanager
+from email.message import Message
+from unittest.mock import patch
 
+import pytest
 from pydantic import ValidationError
 
 from redpath_ai.prompts import SYSTEM_PROMPT, recommendation_prompt
@@ -63,6 +71,92 @@ def action_json(**changes):
     }
     value.update(changes)
     return json.dumps(value)
+
+
+@contextmanager
+def intercepted_http(payload, status=200, location=None):
+    """Keep urllib routing real; replace only the socket-facing operation."""
+    requests = []
+
+    def respond(handler, connection, request, **kwargs):
+        requests.append((request.host, request.full_url, request.data, request.timeout))
+        headers = Message()
+        if location is not None:
+            headers["Location"] = location
+        response = urllib.response.addinfourl(
+            io.BytesIO(json.dumps(payload).encode()), headers, request.full_url,
+            status if len(requests) == 1 else 200,
+        )
+        response.msg = "test response"
+        return response
+
+    with (
+        patch.object(urllib.request, "_opener", None),
+        patch.object(urllib.request.AbstractHTTPHandler, "do_open", respond),
+    ):
+        yield requests
+
+
+@pytest.mark.parametrize("variable", [
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
+])
+def test_ollama_prompt_never_reaches_ambient_proxy_and_falls_back(variable):
+    proxy_prompts = []
+    original_proxy_open = urllib.request.ProxyHandler.proxy_open
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not key.lower().endswith("_proxy") and key != "REQUEST_METHOD"
+    }
+    environment[variable] = "http://proxy.invalid:8080"
+
+    def record_proxy(handler, request, proxy, scheme):
+        proxy_prompts.append(request.data)
+        return original_proxy_open(handler, request, proxy, scheme)
+
+    with (
+        patch.dict(os.environ, environment, clear=True),
+        patch.object(urllib.request, "proxy_bypass", return_value=False),
+        patch.object(urllib.request.ProxyHandler, "proxy_open", record_proxy),
+        intercepted_http({"message": {"content": "invalid JSON"}}) as requests,
+    ):
+        provider = OllamaProvider(invalid_output_retries=0)
+        proposal = provider.recommend_next_step(context("private prompt marker"))
+
+    assert proposal == RuleBasedProvider().recommend_next_step(context("private prompt marker"))
+    assert provider.last_code == ProviderCode.OLLAMA_INVALID_OUTPUT_FALLBACK
+    assert proxy_prompts == []
+    assert len(requests) == 1
+    assert requests[0][:2] == ("127.0.0.1:11434", "http://127.0.0.1:11434/api/chat")
+    assert b"private prompt marker" in requests[0][2]
+    assert requests[0][3] == 20.0
+
+
+@pytest.mark.parametrize("status", [300, 301, 302, 303, 304, 307, 308, 399])
+@pytest.mark.parametrize("location", [
+    "http://127.0.0.1:11434/redirected", "https://external.invalid/collect",
+])
+def test_ollama_redirect_never_starts_a_second_request_and_falls_back(status, location):
+    with intercepted_http({"message": {"content": action_json()}}, status, location) as requests:
+        provider = OllamaProvider(invalid_output_retries=0)
+        proposal = provider.recommend_next_step(context("private prompt marker"))
+
+    assert len(requests) == 1
+    assert requests[0][0] == "127.0.0.1:11434"
+    assert b"private prompt marker" in requests[0][2]
+    assert proposal == RuleBasedProvider().recommend_next_step(context("private prompt marker"))
+    assert provider.last_code == ProviderCode.OLLAMA_UNAVAILABLE_FALLBACK
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_ollama_health_redirect_is_unavailable_without_a_second_request(status):
+    with intercepted_http(
+        {"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]},
+        status, "https://external.invalid/collect",
+    ) as requests:
+        health = OllamaProvider().health()
+
+    assert len(requests) == 1
+    assert not health.available
 
 
 class SchemaTests(unittest.TestCase):

@@ -16,7 +16,7 @@ from redpath.models import (
     PolicyDecision,
     Proposal,
 )
-from redpath_ai import LLMProvider, RuleBasedProvider
+from redpath_ai import LLMProvider, OllamaProvider, RuleBasedProvider
 from redpath_ai.schemas import (
     Explanation,
     ProposalKind,
@@ -250,8 +250,11 @@ def test_recommendation_requires_active_session_and_target(
         assert db.scalar(select(Action)) is None
 
 
-def test_application_defaults_to_rule_based_recommendation_provider(app):
-    assert isinstance(app.state.llm_provider, RuleBasedProvider)
+def test_application_defaults_to_loopback_ollama_provider(app):
+    provider = app.state.llm_provider
+    assert isinstance(provider, OllamaProvider)
+    assert provider.base_url == "http://127.0.0.1:11434"
+    assert isinstance(provider.fallback, RuleBasedProvider)
 
 
 def test_recommendation_rechecks_private_target_boundary(client, app):

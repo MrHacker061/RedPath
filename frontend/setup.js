@@ -8,7 +8,10 @@ function text(value, maximum = 240) {
 }
 function componentStatus(value) {
   if (!value || !STATUSES.has(value.status)) unavailable();
-  return { status: value.status, code: text(value.code, 80), detail: text(value.detail) };
+  const version = value.version === null ? null : text(value.version, 80);
+  const downloadSizeBytes = value.download_size_bytes;
+  if (downloadSizeBytes !== null && (!Number.isSafeInteger(downloadSizeBytes) || downloadSizeBytes <= 0)) unavailable();
+  return { status: value.status, code: text(value.code, 80), detail: text(value.detail), version, downloadSizeBytes };
 }
 function fixedComponent(component) {
   if (!COMPONENTS.includes(component)) unavailable();
@@ -22,16 +25,22 @@ export function normalizeSetup(payload) {
   return { components: Object.fromEntries(COMPONENTS.map((name) => [name, componentStatus(payload.components[name])])) };
 }
 
+export function formatDownloadSize(bytes) {
+  const gib = 1024 ** 3;
+  return bytes >= gib ? `${(bytes / gib).toFixed(2)} GiB` : `${(bytes / (1024 ** 2)).toFixed(2)} MiB`;
+}
+
 export function normalizeDiagnostics(payload) {
   if (!payload || !Array.isArray(payload.codes) || !payload.components || typeof payload.components !== "object") unavailable();
   const components = normalizeSetup({ components: Object.fromEntries(COMPONENTS.map((name) => [name, {
     status: payload.components[name]?.status, code: payload.components[name]?.code, detail: payload.components[name]?.code,
+    version: null, download_size_bytes: null,
   }])) }).components;
   return { version: text(payload.version, 64), dataPath: text(payload.data_path, 400), codes: payload.codes.map((code) => text(code, 80)).slice(0, COMPONENTS.length), components };
 }
 
 function initialComponents() {
-  return Object.fromEntries(COMPONENTS.map((name) => [name, { status: "needs_attention", code: "CHECKING", detail: "Checking setup status." }]));
+  return Object.fromEntries(COMPONENTS.map((name) => [name, { status: "needs_attention", code: "CHECKING", detail: "Checking setup status.", version: null, downloadSizeBytes: null }]));
 }
 
 export class SetupController {

@@ -21,3 +21,5 @@ kali-ssh-config
 *.vdi
 *.ova
 *.7z
+/build/
+/dist/
