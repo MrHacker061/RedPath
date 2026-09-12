@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="RedPath authorized cybersecurity learning dashboard">
   <title>RedPath | Learning Dashboard</title>
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -18,14 +18,30 @@
   </header>
 
   <nav aria-label="Primary navigation">
+    <a href="#setup">Setup</a>
     <a href="#dashboard" aria-current="page">Dashboard</a>
-    <a href="#session">Lab session</a>
-    <a href="#evidence">Evidence</a>
-    <a href="#recommendation">Recommendation</a>
+    <a href="#lab">Lab</a>
+    <a href="#approval">Approval</a>
+    <a href="#results">Results</a>
     <a href="#report">Report</a>
+    <a href="#settings">Settings</a>
   </nav>
 
   <main id="main-content">
+    <section id="setup" class="placeholder" aria-labelledby="setup-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">GUIDED SETUP</p><h2 id="setup-title">Prepare this local learning environment</h2></div>
+        <button id="refresh-setup" type="button">Refresh setup</button>
+      </div>
+      <p id="setup-message" class="notice" role="status" aria-live="polite">Checking guided setup.</p>
+      <div id="setup-components" class="setup-grid" aria-live="polite"></div>
+      <div class="proposal-controls" role="group" aria-label="Fixed setup repairs">
+        <label>Component <select id="setup-component"><option value="ollama">Ollama</option><option value="model">Local model</option><option value="wsl">WSL2</option><option value="kali">RedPath-Kali</option></select></label>
+        <button id="setup-repair" type="button">Repair selected component</button>
+        <button id="setup-cancel" class="secondary-button" type="button">Cancel setup operation</button>
+      </div>
+    </section>
+
     <section id="dashboard" aria-labelledby="dashboard-title">
       <div class="section-heading">
         <div>
@@ -58,7 +74,7 @@
       </div>
     </section>
 
-    <section id="session" aria-labelledby="session-title">
+    <section id="lab" aria-labelledby="session-title">
       <p class="eyebrow">AUTHORIZED SESSION</p>
       <h2 id="session-title">Start an authorized lab session</h2>
       <p>The lesson link teaches you what to do. The target address identifies the separate system you have permission to test.</p>
@@ -89,7 +105,7 @@
       </div>
     </section>
 
-    <section id="recommendation" aria-labelledby="recommendation-title">
+    <section id="approval" aria-labelledby="recommendation-title">
       <div class="section-heading">
         <div>
           <p class="eyebrow">NEXT LEARNING STEP</p>
@@ -125,8 +141,11 @@
             <button id="approve-proposal" type="button">Approve exact proposal</button>
             <button id="reject-proposal" class="secondary-button" type="button">Reject proposal</button>
           </div>
-          <p id="proposal-state" class="notice" role="status" aria-live="polite">Waiting for a policy decision.</p>
-          <p class="detail">Approval does not run anything. No execution endpoint is connected to this frontend.</p>
+          <div id="run-controls" class="proposal-controls" role="group" aria-label="Approved proposal execution" hidden>
+            <button id="run-proposal" type="button" disabled>Run exact approved action</button>
+          </div>
+          <p id="proposal-state" class="notice" role="status" aria-live="polite" tabindex="-1">Waiting for a policy decision.</p>
+          <p class="detail">Approval does not run anything. Running is shown only while this exact approval remains valid and the emergency stop is confirmed clear.</p>
         </article>
       </div>
 
@@ -135,6 +154,7 @@
           <h3 id="emergency-stop-title">Emergency stop</h3>
           <p id="emergency-stop-detail" class="detail">Blocks new approvals and action starts. It does not confirm that running work was cancelled.</p>
           <p id="emergency-stop-state" class="notice" role="status" aria-live="polite">Checking status. Approval is disabled until confirmed clear.</p>
+          <p id="execution-notice" class="notice" role="status" aria-live="polite">Execution is unavailable until an exact approval and clear stop status are confirmed.</p>
         </div>
         <div class="emergency-buttons">
           <button id="emergency-stop" type="button" disabled aria-describedby="emergency-stop-detail">Activate emergency stop</button>
@@ -142,6 +162,13 @@
           <button id="refresh-emergency-stop" class="secondary-button" type="button">Refresh stop status</button>
         </div>
       </aside>
+    </section>
+
+    <section id="results" class="placeholder" aria-labelledby="results-title">
+      <p class="eyebrow">BOUNDED RESULTS</p>
+      <h2 id="results-title">Review the approved action result</h2>
+      <p id="results-message" class="notice" role="status" aria-live="polite">No approved action has run in this session.</p>
+      <ul id="result-evidence" aria-label="Structured execution evidence"></ul>
     </section>
 
     <section id="report" class="placeholder" aria-labelledby="report-title">
@@ -168,11 +195,19 @@
         </article>
       </div>
     </section>
+
+    <section id="settings" class="placeholder" aria-labelledby="settings-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">SETTINGS AND DIAGNOSTICS</p><h2 id="settings-title">Local application details</h2></div>
+        <button id="refresh-diagnostics" type="button">Refresh diagnostics</button>
+      </div>
+      <p id="diagnostics" class="notice" role="status" aria-live="polite">Diagnostics have not been loaded.</p>
+    </section>
   </main>
 
   <footer>
     <p>Only use RedPath on systems you own or have explicit permission to test.</p>
   </footer>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="/assets/app.js"></script>
 </body>
 </html>

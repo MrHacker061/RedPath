@@ -1,10 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ApiError, RedPathApi, normalizeFinding, normalizeHealth } from "../api.js";
+import { ApiError, RedPathApi as ApiClient, SETUP_OPERATION_TIMEOUT_MS, normalizeExplanation, normalizeFinding, normalizeHealth } from "../api.js";
+
+// Route tests inject a session token; bootstrap tests use the production client.
+class RedPathApi extends ApiClient {
+  constructor(options) { super({ csrfToken: "a".repeat(43), ...options }); }
+}
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
+
+test("mutations bootstrap one session token and send it on every mutation", async () => {
+  const requests = [];
+  const api = new ApiClient({ fetchImpl: async (url, options) => {
+    requests.push({ url, options });
+    return jsonResponse(url.endsWith("/desktop-session") ? { csrf_token: "a".repeat(43) } : { active: true });
+  } });
+  await api.activateEmergencyStop();
+  await api.clearEmergencyStop();
+  assert.deepEqual(requests.map(({ url }) => url), ["/api/v1/desktop-session", "/api/v1/emergency-stop", "/api/v1/emergency-stop/clear"]);
+  assert.equal(requests[0].options.headers["X-RedPath-Bootstrap"], "1");
+  for (const request of requests.slice(1)) assert.equal(request.options.headers["X-RedPath-Session"], "a".repeat(43));
+});
+
+test("failed or malformed bootstrap never sends a mutating request", async () => {
+  for (const payload of [{}, { csrf_token: "short" }]) {
+    const requests = [];
+    const api = new ApiClient({ fetchImpl: async (url) => { requests.push(url); return jsonResponse(payload); } });
+    await assert.rejects(api.activateEmergencyStop(), { code: "INVALID_RESPONSE" });
+    assert.deepEqual(requests, ["/api/v1/desktop-session"]);
+  }
+});
 
 test("API client reads Worker 1's versioned health endpoint", async () => {
   let requestedUrl;
@@ -162,8 +189,55 @@ test("audit history and learning report reads remain session scoped", async () =
   ]);
 });
 
+test("setup, diagnostics, and execution client requests use only fixed routes and bodies", async () => {
+  const requests = [];
+  const api = new RedPathApi({ fetchImpl: async (url, options) => {
+    requests.push({ url, method: options.method || "GET", body: options.body });
+    return jsonResponse({});
+  } });
+  await api.getSetup();
+  await api.getDiagnostics();
+  await api.repairSetup("kali");
+  await api.cancelSetup("kali");
+  await api.runProposal("session /1", "proposal /1");
+  assert.deepEqual(requests, [
+    { url: "/api/v1/setup", method: "GET", body: undefined },
+    { url: "/api/v1/diagnostics", method: "GET", body: undefined },
+    { url: "/api/v1/setup/kali/repair", method: "POST", body: '{"consent":true}' },
+    { url: "/api/v1/setup/kali/cancel", method: "POST", body: undefined },
+    { url: "/api/v1/sessions/session%20%2F1/proposals/proposal%20%2F1/run", method: "POST", body: undefined },
+  ]);
+  assert.throws(() => api.repairSetup("shell"), /unavailable/i);
+});
+
+test("setup repair uses a bounded long operation timeout and aborts only when it expires", async () => {
+  let timer;
+  let signal;
+  const api = new RedPathApi({
+    setTimeoutImpl: (callback, delay) => { timer = { callback, delay }; return 1; },
+    clearTimeoutImpl: () => {},
+    fetchImpl: (_url, options) => { signal = options.signal; return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")))); },
+  });
+  const request = api.repairSetup("kali");
+  assert.equal(timer.delay, SETUP_OPERATION_TIMEOUT_MS);
+  assert.equal(signal.aborted, false);
+  timer.callback();
+  await assert.rejects(request, { code: "TIMEOUT" });
+  assert.equal(signal.aborted, true);
+});
+
 test("finding normalization keeps bounded evidence fields", () => {
   assert.deepEqual(normalizeFinding({ id: "finding-1", state: "observed", protocol: "tcp", port: 80, service_hint: "http", evidence_source: "scan-1" }), {
     id: "finding-1", state: "observed", protocol: "tcp", port: 80, service: "http", source: "scan-1",
   });
+});
+
+test("explanation normalization preserves injection as bounded literal text", () => {
+  const learning = normalizeExplanation({
+    execution_authorized: false,
+    explanations: [{ summary: "<script>not markup</script>", what_it_means: "Observed only.", what_it_does_not_prove: "No access proven." }],
+    missing_evidence: [],
+  });
+  assert.equal(learning.explanations[0].summary, "<script>not markup</script>");
+  assert.throws(() => normalizeExplanation({ execution_authorized: false, explanations: [{ summary: "x".repeat(1001), what_it_means: "a", what_it_does_not_prove: "b" }], missing_evidence: [] }), /unavailable/i);
 });

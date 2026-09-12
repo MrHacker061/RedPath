@@ -65,6 +65,19 @@ test("session oversight provides accessible report and audit regions", () => {
   assert.match(html, /id="audit-history"[^>]*aria-labelledby="audit-history-title"/);
 });
 
-test("frontend exposes no execution control", () => {
-  assert.doesNotMatch(html, /id="(?:run|execute)-(?:action|proposal)"/);
+test("guided workflow exposes only the guarded exact-proposal execution control", () => {
+  assert.match(html, /id="run-proposal"[^>]*type="button"[^>]*disabled/);
+  assert.match(html, /id="run-controls"[^>]*hidden/);
+  assert.match(html, /id="proposal-state"[^>]*tabindex="-1"/);
+  assert.doesNotMatch(html, /(?:command|action_name|distribution)[^>]*name=/i);
+  assert.match(html, /id="execution-notice"[^>]*role="status"[^>]*aria-live="polite"/);
+});
+
+test("setup, lab, approval, results, report, and settings are semantic regions", () => {
+  for (const section of ["setup", "dashboard", "lab", "approval", "results", "report", "settings"]) {
+    assert.match(html, new RegExp(`<section id="${section}"[^>]*aria-labelledby=`));
+  }
+  assert.match(html, /id="setup-repair"[^>]*type="button"/);
+  assert.match(html, /id="setup-cancel"[^>]*type="button"/);
+  assert.match(html, /id="diagnostics"[^>]*aria-live="polite"/);
 });

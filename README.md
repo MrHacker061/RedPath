@@ -45,6 +45,32 @@ The files in `docs`, `scanner`, `tests`, and `vm`, along with this README,
 `__pycache__`, `.vagrant`, virtual disks, ISO files, logs, environment files,
 API keys, SSH private keys, or other generated machine state.
 
+## Windows desktop MVP
+
+The Windows 11 x64 MVP packages RedPath as a per-user desktop application and
+starts its guided setup after installation. The installer is built from
+`packaging/RedPath.iss`; its expected output is
+`dist/installer/RedPath-Setup-0.1.0-x64.exe`. It does not bundle the local
+model or managed Kali environment. Those downloads require explicit in-app
+consent and are checksum-verified before use.
+
+The supported Windows 11 x64 launchers (`redpath-desktop`, `redpath-api`, and
+`python -m redpath`) share one per-user Windows instance guard, acquired before
+application storage is initialized. The API launcher uses `REDPATH_PORT`; the
+desktop reserves an available loopback port. Do not run the app factory directly
+with a separate Uvicorn command or multiple workers.
+
+Closing a launcher blocks new setup/actions and requests setup cancellation.
+The initial shutdown wait is bounded to six seconds. If it reports
+`DESKTOP_PROTECTED_WORK_PENDING` or `DESKTOP_SHUTDOWN_TIMEOUT`, keep that process
+running: a non-daemon waiter retains the guard until the HTTP thread, protected
+workers, and owned child processes finish. It does not claim that an already
+started action or an external guest descendant can be forcibly stopped.
+
+For system requirements, installation, repair, authorized-use limits, and
+uninstall preservation details, see [Install RedPath on Windows](docs/INSTALL_WINDOWS.md).
+Before distribution, complete [the MVP release checklist](docs/MVP_RELEASE_CHECKLIST.md).
+
 Important project documents:
 
 - [Full project context](./docs/REDPATH_CONTEXT.md)

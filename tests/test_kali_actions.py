@@ -281,8 +281,8 @@ def test_ipv6_ula_is_formatted_safely_for_http_and_tls():
         authorized_target_address="fd00::20",
     )
 
-    assert runner.calls[0][0][-1].endswith("http://[fd00::20]:8080/")
-    assert runner.calls[1][0][-1].endswith("-connect [fd00::20]:443")
+    assert runner.calls[0][0][-1].endswith("'http://[fd00::20]:8080/'")
+    assert runner.calls[1][0][-1].endswith("-connect '[fd00::20]:443'")
 
 
 def test_nonzero_exit_is_a_bounded_structured_failure():

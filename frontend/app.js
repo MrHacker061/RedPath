@@ -1,5 +1,6 @@
-import { RedPathApi, normalizeFinding, normalizeHealth } from "./api.js";
-import { normalizeRecommendation, ProposalWorkflow, renderProposalState, renderRecommendation } from "./recommendation.js";
+import { RedPathApi, normalizeExplanation, normalizeFinding, normalizeHealth } from "./api.js";
+import { normalizeRecommendation, ProposalWorkflow, recommendationRequestDisabled, renderProposalState, renderRecommendation } from "./recommendation.js";
+import { SetupController, normalizeDiagnostics } from "./setup.js";
 import {
   EmergencyStopWorkflow,
   normalizeAuditHistory,
@@ -38,7 +39,22 @@ const proposalElements = {
   approve: document.querySelector("#approve-proposal"),
   reject: document.querySelector("#reject-proposal"),
   message: document.querySelector("#proposal-state"),
+  run: document.querySelector("#run-proposal"),
+  runControls: document.querySelector("#run-controls"),
 };
+const executionNotice = document.querySelector("#execution-notice");
+const setupElements = {
+  refresh: document.querySelector("#refresh-setup"),
+  message: document.querySelector("#setup-message"),
+  components: document.querySelector("#setup-components"),
+  component: document.querySelector("#setup-component"),
+  repair: document.querySelector("#setup-repair"),
+  cancel: document.querySelector("#setup-cancel"),
+};
+const resultsMessage = document.querySelector("#results-message");
+const resultEvidence = document.querySelector("#result-evidence");
+const diagnosticsButton = document.querySelector("#refresh-diagnostics");
+const diagnostics = document.querySelector("#diagnostics");
 const emergencyElements = {
   activate: document.querySelector("#emergency-stop"),
   clear: document.querySelector("#clear-emergency-stop"),
@@ -63,7 +79,10 @@ let approvalTimer = null;
 const proposalWorkflow = new ProposalWorkflow({
   api,
   onChange: (state) => {
-    renderProposalState(proposalElements, state);
+    renderProposalState(proposalElements, state, emergencyStopIsClear());
+    renderExecutionNotice(state);
+    recommendationButton.disabled = recommendationRequestDisabled(recommendationReady, state);
+    if (state.result) renderResults(state.result);
     clearTimeout(approvalTimer);
     if (state.status === "approved") {
       const delay = Math.max(0, Date.parse(state.receipt.expiresAt) - Date.now());
@@ -75,12 +94,77 @@ const proposalWorkflow = new ProposalWorkflow({
 const emergencyStopWorkflow = new EmergencyStopWorkflow({
   api,
   onChange: (state) => {
-    proposalWorkflow.setEmergencyStop(state.active);
+    proposalWorkflow.setEmergencyStop(state.active, state.status === "clear");
     renderEmergencyStop(emergencyElements, state);
   },
 });
 
+const setupController = new SetupController({
+  api,
+  onChange: (state) => renderSetup(state),
+});
+
 renderEmergencyStop(emergencyElements, emergencyStopWorkflow.state);
+
+function emergencyStopIsClear() {
+  return emergencyStopWorkflow.state.active === false && emergencyStopWorkflow.state.status === "clear";
+}
+
+function renderExecutionNotice(state) {
+  executionNotice.dataset.state = emergencyStopIsClear() && state.executionAvailable ? "healthy" : "pending";
+  executionNotice.textContent = state.executionAvailable && emergencyStopIsClear()
+    ? "This exact approved action may be run once while the approval remains valid."
+    : "Execution is unavailable until an exact approval and clear stop status are confirmed.";
+}
+
+function renderSetup(state) {
+  setupElements.message.dataset.state = state.status === "error" ? "error" : state.busy ? "pending" : "healthy";
+  setupElements.message.textContent = state.message;
+  setupElements.components.replaceChildren(...Object.entries(state.components).map(([name, stage]) => {
+    const card = document.createElement("article");
+    const heading = document.createElement("h3");
+    const detail = document.createElement("p");
+    heading.textContent = `${name}: ${stage.status.replaceAll("_", " ")}`;
+    detail.textContent = `${stage.code} — ${stage.detail}`;
+    card.append(heading, detail);
+    return card;
+  }));
+  setupElements.refresh.disabled = Boolean(state.busy);
+  setupElements.component.disabled = Boolean(state.busy);
+  setupElements.repair.disabled = Boolean(state.busy);
+  setupElements.cancel.disabled = Boolean(state.busy && state.busy !== setupElements.component.value);
+}
+
+function renderResults(result) {
+  resultsMessage.dataset.state = result.status === "completed" ? "healthy" : "error";
+  resultsMessage.textContent = `Action ${result.status}; cleanup status: ${result.cleanupStatus}; exit code: ${result.exitCode ?? "not reported"}.`;
+  resultEvidence.replaceChildren(...(result.evidence.length ? result.evidence : ["No structured evidence was returned."]).map((item) => {
+    const row = document.createElement("li");
+    row.textContent = typeof item === "string" ? item : `${item.kind}: ${item.outcome} on ${item.targetAddress}:${item.port}; output truncated: ${item.outputTruncated ? "yes" : "no"}.`;
+    return row;
+  }));
+}
+
+function clearResults() {
+  resultsMessage.dataset.state = "";
+  resultsMessage.textContent = "No approved action has run in this session.";
+  resultEvidence.replaceChildren();
+}
+
+async function refreshDiagnostics() {
+  diagnosticsButton.disabled = true;
+  diagnostics.textContent = "Loading redacted local diagnostics…";
+  try {
+    const value = normalizeDiagnostics(await api.getDiagnostics());
+    diagnostics.dataset.state = "healthy";
+    diagnostics.textContent = `Version ${value.version}. Data location: ${value.dataPath}. Codes: ${value.codes.join(", ") || "none"}.`;
+  } catch {
+    diagnostics.dataset.state = "error";
+    diagnostics.textContent = "Redacted diagnostics are unavailable.";
+  } finally {
+    diagnosticsButton.disabled = false;
+  }
+}
 
 function resetRecommendation(text) {
   clearTimeout(approvalTimer);
@@ -91,6 +175,9 @@ function resetRecommendation(text) {
   proposalElements.controls.hidden = true;
   proposalElements.approve.disabled = true;
   proposalElements.reject.disabled = true;
+  proposalElements.run.disabled = true;
+  proposalElements.runControls.hidden = true;
+  clearResults();
 }
 
 function setLoading(isLoading) {
@@ -143,6 +230,14 @@ refreshButton.addEventListener("click", refreshHealth);
 emergencyElements.activate.addEventListener("click", () => emergencyStopWorkflow.activate());
 emergencyElements.clear.addEventListener("click", () => emergencyStopWorkflow.clear());
 emergencyElements.refresh.addEventListener("click", () => emergencyStopWorkflow.refresh());
+proposalElements.run.addEventListener("click", () => proposalWorkflow.run());
+setupElements.refresh.addEventListener("click", () => setupController.refresh());
+setupElements.repair.addEventListener("click", () => {
+  const component = setupElements.component.value;
+  if (window.confirm(`Repair ${component}? This may download or configure the fixed local component.`)) setupController.repair(component);
+});
+setupElements.cancel.addEventListener("click", () => setupController.cancel(setupController.state.busy || setupElements.component.value));
+diagnosticsButton.addEventListener("click", refreshDiagnostics);
 
 async function refreshOversight() {
   if (!activeSessionId || oversightButton.disabled) return;
@@ -234,28 +329,28 @@ scanForm.addEventListener("submit", async (event) => {
     recommendationMessage.textContent = recommendationReady
       ? "Evidence is ready. Request one policy-checked learning recommendation."
       : "A recommendation needs at least one imported finding.";
-    const learning = await api.getExplanation(activeSessionId);
+    const learning = normalizeExplanation(await api.getExplanation(activeSessionId));
     explanations.replaceChildren();
-    for (const explanation of learning.explanations || []) {
+    for (const explanation of learning.explanations) {
       const article = document.createElement("article");
       const heading = document.createElement("h3");
       heading.textContent = explanation.summary;
       const meaning = document.createElement("p");
-      meaning.textContent = explanation.what_it_means;
+      meaning.textContent = explanation.whatItMeans;
       const limit = document.createElement("p");
-      limit.textContent = explanation.what_it_does_not_prove;
+      limit.textContent = explanation.whatItDoesNotProve;
       article.append(heading, meaning, limit);
       explanations.append(article);
     }
-    reportMessage.textContent = learning.explanations?.length
+    reportMessage.textContent = learning.explanations.length
       ? "These explanations describe evidence only. They do not authorize execution."
-      : (learning.missing_evidence?.[0] || "No explanation was available.");
+      : (learning.missingEvidence[0] || "No explanation was available.");
   } catch (error) { evidenceMessage.textContent = error.message; }
   finally { submit.disabled = false; }
 });
 
 recommendationButton.addEventListener("click", async () => {
-  if (!activeSessionId || !recommendationReady || recommendationPending) return;
+  if (!activeSessionId || recommendationPending || recommendationRequestDisabled(recommendationReady, proposalWorkflow.state)) return;
   recommendationPending = true;
   recommendationButton.disabled = true;
   recommendationButton.setAttribute("aria-busy", "true");
@@ -287,3 +382,4 @@ proposalElements.reject.addEventListener("click", () => proposalWorkflow.decide(
 
 refreshHealth();
 emergencyStopWorkflow.refresh();
+setupController.refresh();

@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import re
+from urllib.parse import urljoin, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,12 +21,12 @@ from redpath.models import Action, Approval, AuthorizedTarget, Finding, LabSessi
 
 
 @pytest.fixture
-def app(tmp_path):
-    return create_app(Settings(database_url=f"sqlite:///{tmp_path / 'redpath-test.db'}"))
+def app(tmp_path, security_config):
+    return create_app(Settings(database_url=f"sqlite:///{tmp_path / 'redpath-test.db'}"), security=security_config)
 
 
-def test_health_endpoint_and_schema_creation(app):
-    with TestClient(app) as client:
+def test_health_endpoint_and_schema_creation(app, client_options):
+    with TestClient(app, **client_options) as client:
         response = client.get("/api/v1/health")
     assert response.status_code == 200
     payload = response.json()
@@ -37,11 +39,33 @@ def test_health_endpoint_and_schema_creation(app):
     assert {"lab_sessions", "authorized_targets", "proposals", "policy_decisions"} <= set(inspect(app.state.engine).get_table_names())
 
 
+def test_fastapi_serves_desktop_shell(app, client_options):
+    with TestClient(app, **client_options) as client:
+        response = client.get("/")
+
+        assert response.status_code == 200
+        assert '<main id="main-content"' in response.text
+        stylesheet = re.search(r'<link rel="stylesheet" href="([^"]+)">', response.text)
+        script = re.search(r'<script type="module" src="([^"]+)">', response.text)
+        assert stylesheet is not None
+        assert script is not None
+        for asset_url in (stylesheet.group(1), script.group(1)):
+            asset_path = urlsplit(urljoin(str(response.url), asset_url)).path
+            assert client.get(asset_path).status_code == 200
+        assert client.get("/api/v1/health").status_code == 200
+
+
 def test_config_rejects_network_exposure_and_non_sqlite_database():
     with pytest.raises(ValidationError, match="loopback"):
         Settings(host="0.0.0.0")
     with pytest.raises(ValidationError, match="SQLite only"):
         Settings(database_url="postgresql://example")
+
+
+@pytest.mark.parametrize("host", ["localhost", "::1"])
+def test_config_requires_literal_loopback_address(host):
+    with pytest.raises(ValidationError, match="loopback"):
+        Settings(host=host)
 
 
 def test_normalized_finding_is_strict():

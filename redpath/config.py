@@ -4,6 +4,12 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from redpath.runtime import AppPaths
+
+
+def _default_database_url() -> str:
+    return f"sqlite:///{AppPaths.from_environment().database_file}"
+
 
 class Settings(BaseSettings):
     """Local-only backend configuration. Secrets have no defaults."""
@@ -12,13 +18,13 @@ class Settings(BaseSettings):
     app_name: str = "RedPath"
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1024, le=65535)
-    database_url: str = "sqlite:///./.local/redpath.db"
+    database_url: str = Field(default_factory=_default_database_url)
     log_level: str = "INFO"
 
     @field_validator("host")
     @classmethod
     def require_loopback(cls, value: str) -> str:
-        if value not in {"127.0.0.1", "localhost", "::1"}:
+        if value != "127.0.0.1":
             raise ValueError("RedPath must bind to a loopback address")
         return value
 

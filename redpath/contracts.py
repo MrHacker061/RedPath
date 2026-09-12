@@ -2,7 +2,7 @@ from enum import StrEnum
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictModel(BaseModel):
@@ -50,6 +50,40 @@ class AIProposal(StrictModel):
 
 class ComponentHealth(StrictModel):
     status: Literal["healthy", "degraded", "offline", "standby", "unknown"]
+
+
+class SetupRepairRequest(StrictModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    consent: Literal[True]
+
+    @field_validator("consent", mode="before")
+    @classmethod
+    def require_exact_true(cls, value: object) -> object:
+        if value is not True:
+            raise ValueError("consent must be the boolean true")
+        return value
+
+
+class SetupComponentStatus(StrictModel):
+    status: Literal["ready", "needs_attention", "in_progress", "failed"]
+    code: str = Field(min_length=1, max_length=80)
+    detail: str = Field(max_length=500)
+
+
+class SetupResponse(StrictModel):
+    components: dict[Literal["ollama", "model", "wsl", "kali"], SetupComponentStatus]
+
+
+class DiagnosticComponentStatus(StrictModel):
+    status: Literal["ready", "needs_attention", "in_progress", "failed"]
+    code: str = Field(min_length=1, max_length=80)
+
+
+class DiagnosticsResponse(StrictModel):
+    version: str
+    components: dict[Literal["ollama", "model", "wsl", "kali"], DiagnosticComponentStatus]
+    data_path: str = Field(min_length=1, max_length=4096)
+    codes: tuple[str, ...] = Field(max_length=4)
 
 
 class PolicyDecisionContract(StrictModel):

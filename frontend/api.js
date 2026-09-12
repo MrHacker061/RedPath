@@ -1,4 +1,11 @@
 const DEFAULT_TIMEOUT_MS = 5000;
+export const SETUP_OPERATION_TIMEOUT_MS = 30 * 60_000;
+const SETUP_COMPONENTS = new Set(["ollama", "model", "wsl", "kali"]);
+
+function setupComponent(component) {
+  if (!SETUP_COMPONENTS.has(component)) throw new TypeError("Setup component is unavailable.");
+  return component;
+}
 
 export class ApiError extends Error {
   constructor(message, { status = null, code = "REQUEST_FAILED" } = {}) {
@@ -10,16 +17,27 @@ export class ApiError extends Error {
 }
 
 export class RedPathApi {
-  constructor({ baseUrl = "/api/v1", fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  constructor({ baseUrl = "/api/v1", csrfToken = null, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS, setTimeoutImpl = globalThis.setTimeout, clearTimeoutImpl = globalThis.clearTimeout } = {}) {
     if (typeof fetchImpl !== "function") throw new TypeError("A fetch implementation is required.");
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.fetchImpl = fetchImpl;
     this.timeoutMs = timeoutMs;
+    this.setTimeoutImpl = setTimeoutImpl;
+    this.clearTimeoutImpl = clearTimeoutImpl;
+    this.csrfToken = csrfToken;
+    this.bootstrapPromise = null;
   }
 
   async getHealth() {
     return this.request("/health");
   }
+
+  getSetup() { return this.request("/setup"); }
+  repairSetup(component) {
+    return this.request(`/setup/${encodeURIComponent(setupComponent(component))}/repair`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ consent: true }), timeoutMs: SETUP_OPERATION_TIMEOUT_MS });
+  }
+  cancelSetup(component) { return this.request(`/setup/${encodeURIComponent(setupComponent(component))}/cancel`, { method: "POST" }); }
+  getDiagnostics() { return this.request("/diagnostics"); }
 
   async createSession(session) {
     return this.request("/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(session) });
@@ -53,6 +71,10 @@ export class RedPathApi {
     return this.request(`/sessions/${encodeURIComponent(sessionId)}/proposals/${encodeURIComponent(proposalId)}/reject`, { method: "POST" });
   }
 
+  runProposal(sessionId, proposalId) {
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/proposals/${encodeURIComponent(proposalId)}/run`, { method: "POST" });
+  }
+
   async getEmergencyStop() {
     return this.request("/emergency-stop");
   }
@@ -74,12 +96,15 @@ export class RedPathApi {
   }
 
   async request(path, options = {}) {
+    const { timeoutMs = this.timeoutMs, ...requestOptions } = options;
+    const mutating = !["GET", "HEAD", "OPTIONS"].includes((requestOptions.method || "GET").toUpperCase());
+    if (mutating && !this.csrfToken) await this.bootstrap();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeout = this.setTimeoutImpl(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-        ...options,
-        headers: { Accept: "application/json", ...options.headers },
+        ...requestOptions,
+        headers: { Accept: "application/json", ...requestOptions.headers, ...(mutating ? { "X-RedPath-Session": this.csrfToken } : {}) },
         signal: controller.signal,
         credentials: "same-origin",
       });
@@ -102,8 +127,21 @@ export class RedPathApi {
       }
       throw new ApiError("RedPath API is unavailable.", { code: "NETWORK_ERROR" });
     } finally {
-      clearTimeout(timeout);
+      this.clearTimeoutImpl(timeout);
     }
+  }
+
+  async bootstrap() {
+    if (!this.bootstrapPromise) {
+      this.bootstrapPromise = this.request("/desktop-session", { headers: { "X-RedPath-Bootstrap": "1" }, cache: "no-store" })
+        .then((payload) => {
+          if (typeof payload?.csrf_token !== "string" || !/^[A-Za-z0-9_-]{43,128}$/.test(payload.csrf_token)) {
+            throw new ApiError("RedPath desktop session is unavailable.", { code: "INVALID_RESPONSE" });
+          }
+          this.csrfToken = payload.csrf_token;
+        }).catch((error) => { this.bootstrapPromise = null; throw error; });
+    }
+    return this.bootstrapPromise;
   }
 }
 
@@ -111,12 +149,31 @@ export function normalizeFinding(finding) {
   const state = ["observed", "inferred", "verified"].includes(finding?.state) ? finding.state : "unknown";
   const port = Number.isInteger(finding?.port) && finding.port >= 1 && finding.port <= 65535 ? finding.port : null;
   return {
-    id: typeof finding?.id === "string" ? finding.id : "unidentified-finding",
+    id: typeof finding?.id === "string" && finding.id.length <= 128 ? finding.id : "unidentified-finding",
     state,
     protocol: ["tcp", "udp"].includes(finding?.protocol) ? finding.protocol : "unknown",
     port,
     service: typeof finding?.service_hint === "string" && finding.service_hint.length <= 80 ? finding.service_hint : "unknown service",
     source: typeof finding?.evidence_source === "string" && finding.evidence_source.length <= 100 ? finding.evidence_source : "unknown source",
+  };
+}
+
+function boundedResponseText(value, maximum = 1000) {
+  if (typeof value !== "string" || !value.trim() || value.length > maximum) throw new TypeError("Learning data is unavailable because its response was invalid.");
+  return value;
+}
+
+export function normalizeExplanation(payload) {
+  if (!payload || payload.execution_authorized !== false || !Array.isArray(payload.explanations) || !Array.isArray(payload.missing_evidence) || payload.explanations.length > 100 || payload.missing_evidence.length > 100) {
+    throw new TypeError("Learning data is unavailable because its response was invalid.");
+  }
+  return {
+    explanations: payload.explanations.map((item) => ({
+      summary: boundedResponseText(item?.summary),
+      whatItMeans: boundedResponseText(item?.what_it_means),
+      whatItDoesNotProve: boundedResponseText(item?.what_it_does_not_prove),
+    })),
+    missingEvidence: payload.missing_evidence.map((item) => boundedResponseText(item, 240)),
   };
 }
 

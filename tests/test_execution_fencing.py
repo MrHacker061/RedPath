@@ -12,13 +12,13 @@ from redpath_kali import ActionResult, ActionStatus
 
 
 @pytest.fixture
-def app(tmp_path):
-    return create_app(Settings(database_url=f"sqlite:///{tmp_path / 'fence.db'}"))
+def app(tmp_path, security_config):
+    return create_app(Settings(database_url=f"sqlite:///{tmp_path / 'fence.db'}"), security=security_config)
 
 
 @pytest.fixture
-def client(app):
-    with TestClient(app) as value:
+def client(app, client_options):
+    with TestClient(app, **client_options) as value:
         yield value
 
 
@@ -147,6 +147,92 @@ def test_stop_activation_commits_while_an_already_started_dispatch_continues(
     assert stopped.status_code == 200
     assert stopped.json()["active"] is True
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_shutdown_tracks_execution_worker_until_dispatch_and_persistence_finish(client, app, fails):
+    session, target, proposal = _seed_approved_action(client, app)
+    entered, release = Event(), Event()
+
+    class Dispatcher:
+        def dispatch(self, *_args, **_kwargs):
+            entered.set()
+            assert release.wait(3)
+            if fails:
+                raise OSError("fake dispatch failure")
+            return _success(target)
+
+    app.state.action_dispatcher = Dispatcher()
+    operations = app.state.protected_operations
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(client.post, _route(session, proposal))
+        assert entered.wait(3)
+        try:
+            operations.close_admission()
+            assert operations.wait_idle(0) is False
+        finally:
+            release.set()
+        response = pending.result(timeout=3)
+    assert response.status_code == (503 if fails else 200)
+    assert operations.wait_idle(1) is True
+    assert client.post(_route(session, proposal)).status_code == 503
+
+
+def test_abandoned_anyio_action_retains_guard_through_final_database_commit(client, app):
+    import anyio
+    from types import SimpleNamespace
+    from starlette.requests import Request
+    from sqlalchemy import select
+    from redpath import desktop
+    from redpath.execution_api import run_approved_action
+    from redpath.models import Action
+
+    session, target, proposal = _seed_approved_action(client, app)
+    entered, release, committed, guard_released = Event(), Event(), Event(), Event()
+    results = []
+
+    class Dispatcher:
+        def dispatch(self, *_args, **_kwargs):
+            entered.set()
+            assert release.wait(3)
+            return _success(target)
+
+    app.state.action_dispatcher = Dispatcher()
+
+    def worker():
+        results.append(run_approved_action(session["id"], proposal["id"], Request({"type": "http", "app": app})))
+        committed.set()
+
+    async def exercise():
+        async with anyio.create_task_group() as tasks:
+            async def request_task():
+                await anyio.to_thread.run_sync(worker, abandon_on_cancel=True)
+
+            tasks.start_soon(request_task)
+            while not entered.is_set():
+                await anyio.sleep(0.001)
+            tasks.cancel_scope.cancel()
+        host = desktop.DesktopHost(shutdown_timeout=0.05)
+        host.operations = app.state.protected_operations
+        host.app = app
+        host.instance = SimpleNamespace(release=guard_released.set)
+        host.server = SimpleNamespace(should_exit=False, force_exit=False)
+        host.thread = SimpleNamespace(ident=1, join=lambda **_: None, is_alive=lambda: False)
+        try:
+            with pytest.raises(desktop.DesktopStartupError, match="DESKTOP_PROTECTED_WORK_PENDING"):
+                host.stop()
+            assert not guard_released.is_set() and not committed.is_set()
+        finally:
+            release.set()
+            assert committed.wait(1)
+            assert guard_released.wait(1)
+            host._guard_waiter.join(timeout=1)
+        with app.state.session_factory() as db:
+            action = db.scalar(select(Action).where(Action.proposal_id == proposal["id"]))
+            assert action.status == "completed"
+        assert len(results) == 1
+
+    anyio.run(exercise)
 
 
 @pytest.mark.parametrize(

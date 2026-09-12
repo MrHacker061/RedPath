@@ -1,13 +1,19 @@
 """Supported RedPath API launcher with enforced loopback binding."""
 
-import uvicorn
-
 from redpath.config import get_settings
+from redpath.desktop import DesktopHost, _require_windows
 
 
 def main() -> None:
-    settings = get_settings()  # Settings rejects non-loopback hosts.
-    uvicorn.run("redpath.app:app", host=settings.host, port=settings.port)
+    _require_windows()
+    host = DesktopHost(port=get_settings().port)
+    try:
+        host.start()
+        host.thread.join()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        host.stop()
 
 
 if __name__ == "__main__":
