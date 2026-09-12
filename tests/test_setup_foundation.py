@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from io import BytesIO
-import json
 from threading import Event
 from urllib.request import Request
 
@@ -15,7 +14,6 @@ from redpath_setup.downloads import (
     download_verified,
 )
 from redpath_setup.manifest import KALI_ARTIFACT, OLLAMA_ARTIFACT
-from redpath_setup.state import SetupStage, SetupState
 
 
 class FakeResponse:
@@ -146,45 +144,3 @@ def test_redirect_handler_rejects_insecure_location_before_following():
             {"Location": "http://insecure.example/a"},
             "http://insecure.example/a",
         )
-
-
-def test_setup_state_round_trips_atomically(tmp_path):
-    path = tmp_path / "setup.json"
-    SetupState(stages={"ollama": SetupStage("ollama", "ready", "OK", "Ready")}).save(path)
-    assert SetupState.load(path).stages["ollama"].status == "ready"
-    assert not path.with_suffix(".tmp").exists()
-
-
-def test_corrupt_setup_state_is_replaced_with_safe_empty_state(tmp_path):
-    path = tmp_path / "setup.json"
-    path.write_text("not json", encoding="utf-8")
-    state = SetupState.load(path)
-    assert state.stages == {}
-    assert state.code == "SETUP_STATE_INVALID"
-    assert json.loads(path.read_text(encoding="utf-8"))["code"] == "SETUP_STATE_INVALID"
-
-
-def test_setup_state_load_surfaces_storage_errors(tmp_path, monkeypatch):
-    path = tmp_path / "setup.json"
-    path.write_text("{}", encoding="utf-8")
-
-    def fail_read_text(self, **_kwargs):
-        raise PermissionError("access denied")
-
-    monkeypatch.setattr(type(path), "read_text", fail_read_text)
-    with pytest.raises(PermissionError):
-        SetupState.load(path)
-
-
-def test_missing_setup_state_starts_empty(tmp_path):
-    state = SetupState.load(tmp_path / "missing.json")
-    assert state.stages == {}
-    assert state.code == "OK"
-
-
-def test_setup_state_rejects_invalid_stage(tmp_path):
-    path = tmp_path / "setup.json"
-    path.write_text('{"stages":{"ollama":{"name":"ollama","status":"unknown","code":"X","detail":"bad"}}}', encoding="utf-8")
-    state = SetupState.load(path)
-    assert state.stages == {}
-    assert state.code == "SETUP_STATE_INVALID"

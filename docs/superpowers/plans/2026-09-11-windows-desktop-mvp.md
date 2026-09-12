@@ -104,12 +104,12 @@ git commit -m "feat: serve RedPath from packaged app paths"
 
 ---
 
-### Task 2: Pinned download and setup-state foundation
+### Task 2: Pinned download and setup component foundation
 
 **Files:**
 - Create: `redpath_setup/__init__.py`
 - Create: `redpath_setup/downloads.py`
-- Create: `redpath_setup/state.py`
+- Create: `redpath_setup/state.py` for `SetupStage`
 - Create: `redpath_setup/manifest.py`
 - Test: `tests/test_setup_foundation.py`
 
@@ -118,9 +118,8 @@ git commit -m "feat: serve RedPath from packaged app paths"
 - Produces: `OLLAMA_ARTIFACT` and `KALI_ARTIFACT` with the exact global pins
 - Produces: `download_verified(artifact: Artifact, destination: Path, progress: Callable[[int, int | None], None], cancelled: Event, opener=urlopen) -> Path`
 - Produces: `SetupStage(name: str, status: Literal["ready", "needs_attention", "in_progress", "failed"], code: str, detail: str)`
-- Produces: `SetupState.load(path: Path) -> SetupState` and `SetupState.save(path: Path) -> None`
 
-- [ ] **Step 1: Write failing checksum, cancellation, and atomic-state tests**
+- [ ] **Step 1: Write failing checksum and cancellation tests**
 
 ```python
 def test_download_rejects_wrong_checksum(tmp_path):
@@ -128,13 +127,6 @@ def test_download_rejects_wrong_checksum(tmp_path):
     with pytest.raises(ArtifactVerificationError):
         download_verified(artifact, tmp_path, lambda *_: None, Event(), opener=fake_opener(b"wrong"))
     assert not (tmp_path / "a.bin").exists()
-
-
-def test_setup_state_round_trips_atomically(tmp_path):
-    path = tmp_path / "setup.json"
-    SetupState(stages={"ollama": SetupStage("ollama", "ready", "OK", "Ready")}).save(path)
-    assert SetupState.load(path).stages["ollama"].status == "ready"
-    assert not path.with_suffix(".tmp").exists()
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -142,14 +134,14 @@ def test_setup_state_round_trips_atomically(tmp_path):
 Run: `python -m pytest tests/test_setup_foundation.py -v`
 Expected: collection fails because `redpath_setup` is missing.
 
-- [ ] **Step 3: Implement standard-library streaming download and JSON state**
+- [ ] **Step 3: Implement standard-library streaming download**
 
-Use `urllib.request.urlopen`, `hashlib.sha256`, `tempfile.NamedTemporaryFile`, and `os.replace`. Read in 1 MiB chunks, check `cancelled.is_set()` between chunks, cap redirects to HTTPS destinations, delete partial files on every failure, and compare checksums with `hmac.compare_digest`. Use Pydantic strict models for persisted setup state and replace corrupt state with a safe empty state carrying code `SETUP_STATE_INVALID`.
+Use `urllib.request.urlopen`, `hashlib.sha256`, `tempfile.NamedTemporaryFile`, and `os.replace`. Read in 1 MiB chunks, check `cancelled.is_set()` between chunks, cap redirects to HTTPS destinations, delete partial files on every failure, and compare checksums with `hmac.compare_digest`. Use a Pydantic strict `SetupStage` model for component status responses.
 
 - [ ] **Step 4: Run focused tests**
 
 Run: `python -m pytest tests/test_setup_foundation.py -v`
-Expected: checksum, cancellation, HTTPS, progress, corrupt-state, and atomic-save tests pass.
+Expected: checksum, cancellation, HTTPS, and progress tests pass.
 
 - [ ] **Step 5: Commit the slice**
 

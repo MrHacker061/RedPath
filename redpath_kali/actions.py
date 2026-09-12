@@ -12,11 +12,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Protocol, Sequence
 
-from .action_specs import KaliActionError, render_fixed_action
+from .action_specs import FixedActionSpec, KaliActionError, render_fixed_action
 from .vm import KaliVMError, ProcessResult, SAFE_SSH_OPTIONS, SSHConfig
 
 MAX_ACTION_OUTPUT_CHARS = 16_384
 _TRUNCATION_MARKER = "\n[output truncated]"
+
+
 class ActionStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -76,6 +78,31 @@ def _bounded(value: object) -> tuple[str, bool]:
     if len(text) <= MAX_ACTION_OUTPUT_CHARS:
         return text, False
     return text[:MAX_ACTION_OUTPUT_CHARS] + _TRUNCATION_MARKER, True
+
+
+def _action_result(
+    invocation: FixedActionSpec,
+    *,
+    status: ActionStatus,
+    exit_code: int | None = None,
+    stdout: object = "",
+    stderr: object = "",
+    error: str | None = None,
+) -> ActionResult:
+    bounded_stdout, stdout_truncated = _bounded(stdout)
+    bounded_stderr, stderr_truncated = _bounded(stderr)
+    return ActionResult(
+        action_name=invocation.name,
+        target_id=invocation.target_id,
+        target_address=invocation.target_address,
+        port=invocation.port,
+        status=status,
+        exit_code=exit_code,
+        stdout=bounded_stdout,
+        stderr=bounded_stderr,
+        output_truncated=stdout_truncated or stderr_truncated,
+        error=error,
+    )
 
 
 def _validate_ssh_config(config: SSHConfig) -> None:
@@ -152,7 +179,7 @@ class KaliActionDispatcher:
         try:
             ssh = self._vm_manager.discover_ssh_config()
         except KaliVMError:
-            return self._result(
+            return _action_result(
                 invocation,
                 status=ActionStatus.FAILED,
                 error="managed Kali SSH is unavailable",
@@ -172,7 +199,7 @@ class KaliActionDispatcher:
                     invocation.process_timeout,
                 )
         except subprocess.TimeoutExpired as exc:
-            return self._result(
+            return _action_result(
                 invocation,
                 status=ActionStatus.TIMED_OUT,
                 stdout=exc.output,
@@ -180,20 +207,20 @@ class KaliActionDispatcher:
                 error=f"fixed action timed out after {exc.timeout:g} seconds",
             )
         except OSError:
-            return self._result(
+            return _action_result(
                 invocation,
                 status=ActionStatus.FAILED,
                 error="fixed action runner unavailable",
             )
 
         if type(completed.returncode) is not int:
-            return self._result(
+            return _action_result(
                 invocation,
                 status=ActionStatus.FAILED,
                 error="fixed action runner returned an invalid result",
             )
         if completed.returncode != 0:
-            return self._result(
+            return _action_result(
                 invocation,
                 status=ActionStatus.FAILED,
                 exit_code=completed.returncode,
@@ -201,35 +228,10 @@ class KaliActionDispatcher:
                 stderr=completed.stderr,
                 error=f"fixed action exited with status {completed.returncode}",
             )
-        return self._result(
+        return _action_result(
             invocation,
             status=ActionStatus.SUCCEEDED,
             exit_code=0,
             stdout=completed.stdout,
             stderr=completed.stderr,
-        )
-
-    @staticmethod
-    def _result(
-        invocation,
-        *,
-        status: ActionStatus,
-        exit_code: int | None = None,
-        stdout: object = "",
-        stderr: object = "",
-        error: str | None = None,
-    ) -> ActionResult:
-        bounded_stdout, stdout_truncated = _bounded(stdout)
-        bounded_stderr, stderr_truncated = _bounded(stderr)
-        return ActionResult(
-            action_name=invocation.name,
-            target_id=invocation.target_id,
-            target_address=invocation.target_address,
-            port=invocation.port,
-            status=status,
-            exit_code=exit_code,
-            stdout=bounded_stdout,
-            stderr=bounded_stderr,
-            output_truncated=stdout_truncated or stderr_truncated,
-            error=error,
         )

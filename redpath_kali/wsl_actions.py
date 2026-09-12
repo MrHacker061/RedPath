@@ -7,15 +7,11 @@ from typing import Protocol, Sequence
 
 from redpath_setup.wsl import WslSetupError
 
-from .action_specs import (
-    FixedActionSpec,
-    KaliActionError,
-    render_fixed_action,
-)
+from .action_specs import render_fixed_action
 from .actions import (
     ActionResult,
     ActionStatus,
-    _bounded,
+    _action_result,
 )
 from .vm import ProcessResult
 
@@ -46,50 +42,25 @@ class WSLActionDispatcher:
                 invocation.guest_argv, float(invocation.process_timeout)
             )
         except subprocess.TimeoutExpired as exc:
-            return self._result(
-                invocation, ActionStatus.TIMED_OUT, stdout=exc.output, stderr=exc.stderr,
+            return _action_result(
+                invocation, status=ActionStatus.TIMED_OUT, stdout=exc.output, stderr=exc.stderr,
                 error=f"fixed action timed out after {exc.timeout:g} seconds",
             )
         except (OSError, WslSetupError):
-            return self._result(
-                invocation, ActionStatus.FAILED, error="managed Kali WSL is unavailable"
+            return _action_result(
+                invocation, status=ActionStatus.FAILED, error="managed Kali WSL is unavailable"
             )
         if not isinstance(completed, ProcessResult) or type(completed.returncode) is not int:
-            return self._result(
-                invocation, ActionStatus.FAILED, error="managed Kali WSL returned an invalid result"
+            return _action_result(
+                invocation, status=ActionStatus.FAILED, error="managed Kali WSL returned an invalid result"
             )
         if completed.returncode != 0:
-            return self._result(
-                invocation, ActionStatus.FAILED, exit_code=completed.returncode,
+            return _action_result(
+                invocation, status=ActionStatus.FAILED, exit_code=completed.returncode,
                 stdout=completed.stdout, stderr=completed.stderr,
                 error=f"fixed action exited with status {completed.returncode}",
             )
-        return self._result(
-            invocation, ActionStatus.SUCCEEDED, exit_code=0,
+        return _action_result(
+            invocation, status=ActionStatus.SUCCEEDED, exit_code=0,
             stdout=completed.stdout, stderr=completed.stderr,
-        )
-
-    @staticmethod
-    def _result(
-        invocation: FixedActionSpec,
-        status: ActionStatus,
-        *,
-        exit_code: int | None = None,
-        stdout: object = "",
-        stderr: object = "",
-        error: str | None = None,
-    ) -> ActionResult:
-        bounded_stdout, stdout_truncated = _bounded(stdout)
-        bounded_stderr, stderr_truncated = _bounded(stderr)
-        return ActionResult(
-            action_name=invocation.name,
-            target_id=invocation.target_id,
-            target_address=invocation.target_address,
-            port=invocation.port,
-            status=status,
-            exit_code=exit_code,
-            stdout=bounded_stdout,
-            stderr=bounded_stderr,
-            output_truncated=stdout_truncated or stderr_truncated,
-            error=error,
         )

@@ -1,4 +1,4 @@
-"""First-run setup artifacts and persisted component state."""
+"""First-run setup artifacts and component status models."""
 
 from .downloads import (
     ArtifactVerificationError,
@@ -9,7 +9,7 @@ from .downloads import (
     download_verified,
 )
 from .manifest import Artifact, KALI_ARTIFACT, OLLAMA_ARTIFACT
-from .state import SetupStage, SetupState
+from .state import SetupStage
 
 __all__ = [
     "Artifact",
@@ -21,6 +21,5 @@ __all__ = [
     "KALI_ARTIFACT",
     "OLLAMA_ARTIFACT",
     "SetupStage",
-    "SetupState",
     "download_verified",
 ]
