@@ -19,7 +19,7 @@ class Response(io.BytesIO):
 
 
 def artifact(body=b"first"):
-    return replace(OLLAMA_ARTIFACT, filename="a.bin", sha256=hashlib.sha256(body).hexdigest())
+    return replace(OLLAMA_ARTIFACT, filename="a.bin", sha256=hashlib.sha256(body).hexdigest(), size_bytes=len(body))
 
 
 def test_download_passes_bounded_socket_timeout_to_opener(tmp_path):

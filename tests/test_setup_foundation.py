@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from io import BytesIO
 from threading import Event
@@ -13,7 +14,7 @@ from redpath_setup.downloads import (
     InsecureDownloadError,
     download_verified,
 )
-from redpath_setup.manifest import KALI_ARTIFACT, OLLAMA_ARTIFACT
+from redpath_setup.manifest import Artifact, KALI_ARTIFACT, OLLAMA_ARTIFACT
 
 
 class FakeResponse:
@@ -59,30 +60,42 @@ def fake_opener(body: bytes, url: str = "https://example.test/a"):
 
 
 def test_manifest_contains_exact_pinned_artifacts():
-    assert (OLLAMA_ARTIFACT.version, OLLAMA_ARTIFACT.url, OLLAMA_ARTIFACT.sha256) == (
+    assert (OLLAMA_ARTIFACT.version, OLLAMA_ARTIFACT.url, OLLAMA_ARTIFACT.sha256, OLLAMA_ARTIFACT.size_bytes) == (
         "0.34.0",
         "https://github.com/ollama/ollama/releases/download/v0.34.0/OllamaSetup.exe",
         "e2b98770fb87f3b4c593c22f2e8eda59bcac1cd7b141f1388c4181a8bf271a72",
+        1_574_272_976,
     )
-    assert (KALI_ARTIFACT.version, KALI_ARTIFACT.url, KALI_ARTIFACT.sha256) == (
+    assert (KALI_ARTIFACT.version, KALI_ARTIFACT.url, KALI_ARTIFACT.sha256, KALI_ARTIFACT.size_bytes) == (
         "2026.2",
         "https://kali.download/wsl-images/kali-2026.2/kali-linux-2026.2-wsl-rootfs-amd64.wsl",
         "1b172389e9109e9bb0c3d1fa18eda078271484dbcef8dbee4aab8b1f369466c6",
+        247_857_686,
     )
 
 
+def test_artifact_rejects_non_positive_size():
+    with pytest.raises(ValueError, match="size"):
+        Artifact(
+            name="test",
+            version="1",
+            url="https://example.test/a",
+            sha256="0" * 64,
+            filename="a.bin",
+            size_bytes=0,
+        )
+
+
 def test_download_rejects_wrong_checksum(tmp_path):
-    artifact = replace(OLLAMA_ARTIFACT, sha256="0" * 64, filename="a.bin")
+    artifact = replace(OLLAMA_ARTIFACT, sha256="0" * 64, filename="a.bin", size_bytes=len(b"wrong"))
     with pytest.raises(ArtifactVerificationError):
         download_verified(artifact, tmp_path, lambda *_: None, Event(), opener=fake_opener(b"wrong"))
     assert not (tmp_path / "a.bin").exists()
 
 
 def test_download_reports_progress_and_writes_verified_file(tmp_path):
-    import hashlib
-
     body = b"verified payload"
-    artifact = replace(OLLAMA_ARTIFACT, sha256=hashlib.sha256(body).hexdigest(), filename="a.bin")
+    artifact = replace(OLLAMA_ARTIFACT, sha256=hashlib.sha256(body).hexdigest(), filename="a.bin", size_bytes=len(body))
     progress = []
     result = download_verified(artifact, tmp_path, lambda done, total: progress.append((done, total)), Event(), opener=fake_opener(body))
     assert result == tmp_path / "a.bin"
@@ -90,10 +103,29 @@ def test_download_reports_progress_and_writes_verified_file(tmp_path):
     assert progress[-1] == (len(body), len(body))
 
 
+def test_download_rejects_matching_checksum_with_wrong_size(tmp_path):
+    body = b"verified payload"
+    artifact = replace(
+        OLLAMA_ARTIFACT,
+        sha256=hashlib.sha256(body).hexdigest(),
+        filename="a.bin",
+        size_bytes=len(body) + 1,
+    )
+
+    with pytest.raises(ArtifactVerificationError, match="size"):
+        download_verified(artifact, tmp_path, lambda *_: None, Event(), opener=fake_opener(body))
+    assert not (tmp_path / "a.bin").exists()
+
+
 def test_download_cancellation_removes_partial_file(tmp_path):
     cancelled = Event()
     first_chunk = b"first chunk"
-    artifact = replace(OLLAMA_ARTIFACT, filename="a.bin", sha256="0" * 64)
+    artifact = replace(
+        OLLAMA_ARTIFACT,
+        filename="a.bin",
+        sha256="0" * 64,
+        size_bytes=len(first_chunk) + len(b"second chunk"),
+    )
     progress = []
 
     def cancel_after_first(done, total):
@@ -114,11 +146,11 @@ def test_download_cancellation_removes_partial_file(tmp_path):
 
 
 def test_download_rejects_non_https_url_and_redirect(tmp_path):
-    artifact = replace(OLLAMA_ARTIFACT, url="http://example.test/a", filename="a.bin")
+    artifact = replace(OLLAMA_ARTIFACT, url="http://example.test/a", filename="a.bin", size_bytes=len(b"payload"))
     with pytest.raises(InsecureDownloadError):
         download_verified(artifact, tmp_path, lambda *_: None, Event(), opener=fake_opener(b"payload"))
 
-    artifact = replace(OLLAMA_ARTIFACT, filename="a.bin")
+    artifact = replace(OLLAMA_ARTIFACT, filename="a.bin", size_bytes=len(b"payload"))
     with pytest.raises(InsecureDownloadError):
         download_verified(
             artifact,

@@ -233,6 +233,8 @@ def download_verified(
             _remaining(deadline, cancelled)
             if not hmac.compare_digest(digest.hexdigest(), artifact.sha256.lower()):
                 raise ArtifactVerificationError(f"SHA-256 mismatch for {artifact.name}")
+            if downloaded != artifact.size_bytes:
+                raise ArtifactVerificationError(f"size mismatch for {artifact.name}")
         _remaining(deadline, cancelled)
         os.replace(temporary_path, final_path)
         temporary_path = None
