@@ -68,6 +68,8 @@ class SetupComponentStatus(StrictModel):
     status: Literal["ready", "needs_attention", "in_progress", "failed"]
     code: str = Field(min_length=1, max_length=80)
     detail: str = Field(max_length=500)
+    version: str | None = Field(default=None, max_length=80)
+    download_size_bytes: int | None = Field(default=None, ge=1)
 
 
 class SetupResponse(StrictModel):

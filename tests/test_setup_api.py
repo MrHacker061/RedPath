@@ -80,6 +80,44 @@ def test_setup_returns_only_fixed_component_states(client):
     assert response.json()["components"]["kali"]["code"] == "KALI_NOT_INSTALLED"
 
 
+def test_setup_discloses_pinned_downloads_before_consent(client, app):
+    response = client.get("/api/v1/setup")
+
+    assert response.status_code == 200
+    components = response.json()["components"]
+    assert {
+        name: (stage["version"], stage["download_size_bytes"])
+        for name, stage in components.items()
+    } == {
+        "ollama": ("0.34.0", 1_574_272_976),
+        "model": ("qwen2.5:7b-instruct-q4_K_M", 4_683_087_332),
+        "kali": ("2026.2", 247_857_686),
+        "wsl": (None, None),
+    }
+    assert app.state.ollama_setup.installs == []
+    assert app.state.ollama_setup.pulls == []
+    assert app.state.wsl_setup.enables == []
+    assert app.state.wsl_setup.installs == []
+
+
+@pytest.mark.parametrize("component", ["ollama", "model", "wsl", "kali"])
+def test_setup_metadata_stays_fixed_for_repair_and_cancel(client, app, component):
+    expected = client.get("/api/v1/setup").json()["components"][component]
+    responses = [client.post(f"/api/v1/setup/{component}/repair", json={"consent": True}),
+                 client.post(f"/api/v1/setup/{component}/cancel")]
+    active = app.state.setup_operations.begin(component)
+    assert active is not None
+    try:
+        responses.append(client.post(f"/api/v1/setup/{component}/cancel"))
+    finally:
+        app.state.setup_operations.finish(component, active)
+
+    for response in responses:
+        assert response.status_code == 200
+        assert response.json()["version"] == expected["version"]
+        assert response.json()["download_size_bytes"] == expected["download_size_bytes"]
+
+
 def test_setup_repair_requires_exact_consent_for_fixed_component(client, app):
     accepted = client.post("/api/v1/setup/model/repair", json={"consent": True})
 

@@ -1,6 +1,6 @@
 import { RedPathApi, normalizeExplanation, normalizeFinding, normalizeHealth } from "./api.js";
 import { normalizeRecommendation, ProposalWorkflow, recommendationRequestDisabled, renderProposalState, renderRecommendation } from "./recommendation.js";
-import { SetupController, normalizeDiagnostics } from "./setup.js";
+import { SetupController, formatDownloadSize, normalizeDiagnostics } from "./setup.js";
 import {
   EmergencyStopWorkflow,
   normalizeAuditHistory,
@@ -127,11 +127,16 @@ function renderSetup(state) {
     heading.textContent = `${name}: ${stage.status.replaceAll("_", " ")}`;
     detail.textContent = `${stage.code} — ${stage.detail}`;
     card.append(heading, detail);
+    if (stage.version !== null || stage.downloadSizeBytes !== null) {
+      const metadata = document.createElement("p");
+      metadata.textContent = [stage.version, stage.downloadSizeBytes === null ? null : formatDownloadSize(stage.downloadSizeBytes)].filter((value) => value !== null).join(" · ");
+      card.append(metadata);
+    }
     return card;
   }));
   setupElements.refresh.disabled = Boolean(state.busy);
   setupElements.component.disabled = Boolean(state.busy);
-  setupElements.repair.disabled = Boolean(state.busy);
+  setupElements.repair.disabled = Boolean(state.busy) || state.status !== "ready" || Object.values(state.components).some((stage) => stage.code === "CHECKING");
   setupElements.cancel.disabled = Boolean(state.busy && state.busy !== setupElements.component.value);
 }
 

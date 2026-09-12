@@ -15,11 +15,19 @@ from redpath.contracts import (
     SetupResponse,
 )
 from redpath_setup.state import SetupStage
+from redpath_setup.manifest import KALI_ARTIFACT, OLLAMA_ARTIFACT
+from redpath_ai.providers import OLLAMA_MODEL
 from redpath.operations import protected_operations
 
 router = APIRouter(prefix="/api/v1", tags=["setup"])
 COMPONENTS = ("ollama", "model", "wsl", "kali")
 ComponentName = Literal["ollama", "model", "wsl", "kali"]
+_DOWNLOAD_METADATA: dict[str, tuple[str | None, int | None]] = {
+    "ollama": (OLLAMA_ARTIFACT.version, OLLAMA_ARTIFACT.size_bytes),
+    "model": (OLLAMA_MODEL, 4_683_087_332),
+    "kali": (KALI_ARTIFACT.version, KALI_ARTIFACT.size_bytes),
+    "wsl": (None, None),
+}
 _DIAGNOSTIC_CODES = frozenset({
     "OLLAMA_READY", "MODEL_READY", "MODEL_MISSING", "OLLAMA_UNAVAILABLE",
     "WSL_READY", "WSL2_REQUIRED", "WSL_UNAVAILABLE", "KALI_WSL_REQUIRED",
@@ -85,7 +93,11 @@ def _cancelled(component: ComponentName) -> SetupStage:
 def _as_status(component: str, stage: object) -> SetupComponentStatus:
     if not isinstance(stage, SetupStage):
         stage = _failed(component, "SETUP_STATUS_UNAVAILABLE")
-    return SetupComponentStatus(status=stage.status, code=stage.code, detail=stage.detail)
+    version, download_size_bytes = _DOWNLOAD_METADATA[component]
+    return SetupComponentStatus(
+        status=stage.status, code=stage.code, detail=stage.detail,
+        version=version, download_size_bytes=download_size_bytes,
+    )
 
 
 def _component_stages(request: Request) -> dict[ComponentName, SetupComponentStatus]:
@@ -192,9 +204,9 @@ def cancel_setup(
     del payload
     fixed_component = _component_or_404(component)
     if not _operations(request).cancel(fixed_component):
-        return SetupComponentStatus(
-            status="needs_attention", code="NO_ACTIVE_OPERATION", detail="No matching setup operation is active."
-        )
-    return SetupComponentStatus(
-        status="in_progress", code="CANCEL_REQUESTED", detail="Cancellation was requested."
-    )
+        return _as_status(fixed_component, SetupStage(
+            fixed_component, "needs_attention", "NO_ACTIVE_OPERATION", "No matching setup operation is active."
+        ))
+    return _as_status(fixed_component, SetupStage(
+        fixed_component, "in_progress", "CANCEL_REQUESTED", "Cancellation was requested."
+    ))
