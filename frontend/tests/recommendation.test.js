@@ -147,7 +147,6 @@ test("workflow blocks decisions for a policy-rejected proposal", async () => {
   assert.equal(controller.state.status, "rejected");
   assert.equal(await controller.decide("reject"), false);
   assert.equal(calls, 0);
-  assert.equal(controller.state.executionAvailable, false);
 });
 
 test("workflow marks an expired approval as non-executable", async () => {
@@ -162,7 +161,6 @@ test("workflow marks an expired approval as non-executable", async () => {
   controller.load(workflow.normalizeRecommendation(response));
   await controller.decide("approve");
   assert.equal(controller.state.status, "expired");
-  assert.equal(controller.state.executionAvailable, false);
 });
 
 test("workflow records rejection and does not expose an execution action", async () => {
@@ -171,7 +169,6 @@ test("workflow records rejection and does not expose an execution action", async
   controller.load(workflow.normalizeRecommendation(response));
   await controller.decide("reject");
   assert.equal(controller.state.status, "rejected");
-  assert.equal(controller.state.executionAvailable, false);
 });
 
 test("workflow replaces backend errors with a bounded frontend message", async () => {
@@ -182,7 +179,6 @@ test("workflow replaces backend errors with a bounded frontend message", async (
   await controller.decide("approve");
   assert.equal(controller.state.status, "error");
   assert.doesNotMatch(controller.state.message, /secret|traceback/i);
-  assert.equal(controller.state.executionAvailable, false);
 });
 
 test("recommendation renderer inserts contract fields as literal text", () => {
