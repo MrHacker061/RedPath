@@ -4,6 +4,7 @@ import ctypes
 import importlib
 import io
 import json
+import math
 import os
 import platform
 import socket
@@ -12,22 +13,23 @@ import time
 from collections.abc import Callable
 from http.client import HTTPConnection, HTTPException, HTTPResponse
 from pathlib import Path
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any
 from urllib.parse import urlsplit
 
 from redpath.local_security import LocalSecurityConfig
 from redpath.windows_instance import InstanceLockError, WindowsInstanceMutex
+from redpath.operations import ProtectedOperations
 
 
 class DesktopStartupError(RuntimeError):
     """An application-owned error safe to display in a native dialog."""
 
 
-def _loopback_socket() -> socket.socket:
+def _loopback_socket(port: int = 0) -> socket.socket:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        listener.bind(("127.0.0.1", 0))
+        listener.bind(("127.0.0.1", port))
         return listener
     except BaseException:
         listener.close()
@@ -42,10 +44,10 @@ def find_loopback_port() -> int:
         listener.close()
 
 
-def _create_app(security: LocalSecurityConfig) -> Any:
+def _create_app(security: LocalSecurityConfig, operations: ProtectedOperations) -> Any:
     from redpath.app import create_app
 
-    return create_app(security=security)
+    return create_app(security=security, operations=operations)
 
 
 def _create_server(app: Any, port: int) -> Any:
@@ -122,7 +124,17 @@ class DesktopHost:
         server_factory: Callable[[Any, int], Any] = _create_server,
         health_probe: Callable[[str, float], bool] = _health_probe,
         instance_factory: Callable[[], WindowsInstanceMutex] = WindowsInstanceMutex,
+        *, port: int | None = None, shutdown_timeout: float = 6.0,
     ) -> None:
+        if port is not None and (type(port) is not int or not 1 <= port <= 65535):
+            raise ValueError("a valid loopback port is required")
+        if not math.isfinite(shutdown_timeout) or not 0 < shutdown_timeout <= 60:
+            raise ValueError("shutdown timeout must be positive and at most 60 seconds")
+        self.port, self.shutdown_timeout = port, shutdown_timeout
+        self.operations = ProtectedOperations()
+        self.app: Any = None
+        self._release_lock = Lock()
+        self._guard_waiter: Thread | None = None
         self.server_factory = server_factory
         self.health_probe = health_probe
         self.instance_factory = instance_factory
@@ -132,6 +144,7 @@ class DesktopHost:
         self.listener: socket.socket | None = None
         self.url: str | None = None
         self._failed = False
+        self._stopping = False
 
     def _serve(self) -> None:
         try:
@@ -140,6 +153,8 @@ class DesktopHost:
             self._failed = True
 
     def start(self) -> str:
+        if self._stopping:
+            raise DesktopStartupError("DESKTOP_SHUTDOWN_STARTED: This host is stopping; use a new instance after shutdown completes.")
         if self.url is not None:
             return self.url
         try:
@@ -149,9 +164,10 @@ class DesktopHost:
                 instance.acquire()
                 self.instance = instance
             # Keep the OS-assigned port reserved until Uvicorn takes ownership.
-            self.listener = _loopback_socket()
+            self.listener = _loopback_socket() if self.port is None else _loopback_socket(self.port)
             port = self.listener.getsockname()[1]
-            self.server = self.server_factory(_create_app(LocalSecurityConfig(port)), port)
+            self.app = _create_app(LocalSecurityConfig(port), self.operations)
+            self.server = self.server_factory(self.app, port)
             self.thread = Thread(target=self._serve, name="RedPath HTTP", daemon=False)
             self.thread.start()
             url = f"http://127.0.0.1:{port}"
@@ -178,25 +194,60 @@ class DesktopHost:
             raise DesktopStartupError("DESKTOP_SERVER_FAILED: RedPath could not start. Check local storage and reinstall RedPath if needed.") from None
 
     def stop(self) -> None:
+        self._stopping = True
         self.url = None
+        self.operations.close_admission()
+        deadline = time.monotonic() + self.shutdown_timeout
         try:
-            if self.server is not None:
-                self.server.should_exit = True
-            if self.thread is not None and self.thread.ident is not None:
-                self.thread.join(timeout=5)
-                if self.thread.is_alive():
-                    self.server.force_exit = True
-                    self.thread.join(timeout=1)
-                if self.thread.is_alive():
-                    raise DesktopStartupError("DESKTOP_SHUTDOWN_TIMEOUT: RedPath could not stop its server. Close RedPath in Task Manager before restarting.")
-                self.thread = None
-        finally:
-            if self.listener is not None:
-                self.listener.close()
-                self.listener = None
-            if self.instance is not None and (self.thread is None or not self.thread.is_alive()):
+            try:
+                if self.server is not None:
+                    self.server.should_exit = True
+                if self.thread is not None and self.thread.ident is not None:
+                    self.thread.join(timeout=max(0, min(5, deadline - time.monotonic())))
+                    if self.thread.is_alive():
+                        self.server.force_exit = True
+                        self.thread.join(timeout=max(0, deadline - time.monotonic()))
+                    if self.thread.is_alive():
+                        raise DesktopStartupError("DESKTOP_SHUTDOWN_TIMEOUT: RedPath is still stopping its server. Keep the process running; another instance remains blocked until shutdown finishes.")
+                    self.thread = None
+                if not self.operations.wait_idle(max(0, deadline - time.monotonic())):
+                    raise DesktopStartupError("DESKTOP_PROTECTED_WORK_PENDING: RedPath is still stopping protected work. Keep the process running; another instance remains blocked until its workers and child processes finish.")
+            finally:
+                if self.listener is not None:
+                    self.listener.close()
+                    self.listener = None
+        except BaseException:
+            self._retain_guard()
+            raise
+        self._release_instance()
+
+    def _release_instance(self) -> None:
+        with self._release_lock:
+            if (self.thread is not None and self.thread.is_alive()) or not self.operations.wait_idle(0):
+                return
+            engine = getattr(getattr(self.app, "state", None), "engine", None)
+            if engine is not None:
+                engine.dispose()
+            if self.instance is not None:
                 self.instance.release()
                 self.instance = None
+
+    def _retain_guard(self) -> None:
+        """Keep Python and its Windows guard alive if shutdown must return early."""
+        with self._release_lock:
+            if self._guard_waiter is not None or self.instance is None:
+                return
+            server_thread = self.thread
+
+            def drain() -> None:
+                if server_thread is not None and server_thread.ident is not None:
+                    while server_thread.is_alive():
+                        server_thread.join(timeout=0.05)
+                self.operations.wait_idle(None)
+                self._release_instance()
+
+            self._guard_waiter = Thread(target=drain, name="RedPath protected shutdown", daemon=False)
+            self._guard_waiter.start()
 
 
 def _require_windows() -> None:

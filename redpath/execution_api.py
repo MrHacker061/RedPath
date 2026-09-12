@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Any, NoReturn
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from pydantic import ValidationError
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -24,7 +24,8 @@ from redpath.models import (
     AuthorizedTarget,
     PolicyDecision,
 )
-from redpath.session_api import audit, get_db
+from redpath.session_api import audit
+from redpath.operations import protected_operations
 from redpath.stop_api import _begin_state_change, _now, emergency_stop_active
 from redpath_kali import ActionResult as KaliActionResult
 from redpath_kali import ActionStatus
@@ -219,9 +220,18 @@ def run_approved_action(
     proposal_id: str,
     request: Request,
     payload: None = Body(default=None),
-    db: Session = Depends(get_db),
 ) -> ActionResultContract:
     del payload
+    # Both the lifetime registration and DB session belong to the actual sync
+    # worker. Abandoning the ASGI request cannot end either context early.
+    with protected_operations(request).operation():
+        with request.app.state.session_factory() as db:
+            return _run_approved_action(session_id, proposal_id, request, db)
+
+
+def _run_approved_action(
+    session_id: str, proposal_id: str, request: Request, db: Session,
+) -> ActionResultContract:
     fence = _execution_fence(request)
     _begin_state_change(db)
     item, target, proposal, validated = _decision_context(db, session_id, proposal_id)

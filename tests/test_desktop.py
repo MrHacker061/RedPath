@@ -41,7 +41,7 @@ class FakeServer:
 def environment(monkeypatch):
     listener = FakeSocket()
     monkeypatch.setattr(desktop.socket, "socket", lambda *_: listener)
-    monkeypatch.setattr(desktop, "_create_app", lambda _security: object())
+    monkeypatch.setattr(desktop, "_create_app", lambda _security, _operations: object())
     monkeypatch.setattr(desktop.WindowsInstanceMutex, "acquire", lambda _: None)
     monkeypatch.setattr(desktop.WindowsInstanceMutex, "release", lambda _: None)
     return listener
@@ -70,7 +70,8 @@ def test_host_returns_only_after_health_and_stops_idempotently(environment):
 
 
 def test_health_timeout_stops_and_joins_server(environment, monkeypatch):
-    clock = iter([0, 16])
+    from itertools import chain, repeat
+    clock = chain([0, 16], repeat(16))
     monkeypatch.setattr(desktop.time, "monotonic", lambda: next(clock))
     server = FakeServer()
     host = desktop.DesktopHost(server_factory=lambda *_: server, health_probe=lambda *_: False)

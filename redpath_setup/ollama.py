@@ -12,6 +12,7 @@ from threading import Event, Thread
 from typing import Protocol
 
 from redpath_ai.providers import OLLAMA_MODEL, OllamaProvider
+from redpath.operations import own_child
 
 from .downloads import DownloadCancelledError, DownloadError, download_verified
 from .manifest import OLLAMA_ARTIFACT
@@ -92,6 +93,7 @@ def _run(
         errors="replace",
         shell=False,
     )
+    own_child(process)
     assert process.stderr is not None
     updates: Queue[int] = Queue(maxsize=1)
     stopped = Event()

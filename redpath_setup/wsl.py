@@ -16,6 +16,7 @@ from threading import Event, Lock, Thread
 from typing import BinaryIO, Protocol
 
 from redpath_kali import ProcessResult
+from redpath.operations import own_child
 
 from .downloads import DownloadCancelledError, DownloadError, download_verified
 from .manifest import Artifact, KALI_ARTIFACT
@@ -119,6 +120,7 @@ def _run_cancellable(
         list(argv), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, bufsize=0, shell=False,
     )
+    own_child(process)
     stopped = Event()
     readers = [_BoundedDrain(process.stdout, stopped), _BoundedDrain(process.stderr, stopped)]
     pipe_deadline = deadline

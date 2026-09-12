@@ -32,9 +32,10 @@ def test_host_acquires_instance_before_any_storage_or_listener_and_releases_afte
         mutex.events.append("socket")
         return listener
 
-    def create_app(security):
+    def create_app(security, operations):
         assert mutex.held
         assert security.host == "127.0.0.1:43210"
+        assert operations is host.operations
         mutex.events.append("app")
         return object()
 
@@ -122,18 +123,28 @@ def test_mutex_is_per_user_closes_duplicate_handle_and_allows_restart():
     assert not api.open
 
 
-def test_shutdown_timeout_retains_mutex_until_server_has_stopped():
+def test_shutdown_timeout_retains_mutex_until_server_has_stopped(monkeypatch):
+    from threading import Event
+
     mutex = FakeMutex()
     mutex.acquire()
-    host = desktop.DesktopHost(instance_factory=lambda: mutex)
+    host = desktop.DesktopHost(instance_factory=lambda: mutex, shutdown_timeout=0.01)
     host.instance = mutex
+    monkeypatch.setattr(desktop, "_loopback_socket", lambda: pytest.fail("restarting a stopped host must not open a listener"))
     host.server = SimpleNamespace(should_exit=False, force_exit=False)
-    host.thread = SimpleNamespace(ident=1, join=lambda **_kwargs: None, is_alive=lambda: True)
-    with pytest.raises(desktop.DesktopStartupError, match="DESKTOP_SHUTDOWN_TIMEOUT"):
+    exited = Event()
+    host.thread = SimpleNamespace(ident=1, join=lambda timeout=None: exited.wait(timeout), is_alive=lambda: not exited.is_set())
+    try:
+        with pytest.raises(desktop.DesktopStartupError, match="DESKTOP_SHUTDOWN_TIMEOUT"):
+            host.stop()
+        assert mutex.held and host.server.force_exit
+        assert host._guard_waiter is not None and not host._guard_waiter.daemon
+        with pytest.raises(desktop.DesktopStartupError, match="DESKTOP_SHUTDOWN_STARTED"):
+            host.start()
+    finally:
+        exited.set()
+        host._guard_waiter.join(timeout=1)
         host.stop()
-    assert mutex.held and host.server.force_exit
-    host.thread.is_alive = lambda: False
-    host.stop()
     assert not mutex.held
 
 
@@ -141,7 +152,7 @@ def test_storage_initialization_failure_releases_instance(monkeypatch):
     mutex = FakeMutex()
     monkeypatch.setattr(desktop, "_loopback_socket", lambda: SimpleNamespace(getsockname=lambda: ("127.0.0.1", 43210), close=lambda: None))
 
-    def fail(_security):
+    def fail(_security, _operations):
         assert mutex.held
         raise OSError("storage unavailable")
 

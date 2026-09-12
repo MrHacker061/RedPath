@@ -15,6 +15,7 @@ from redpath.contracts import (
     SetupResponse,
 )
 from redpath_setup.state import SetupStage
+from redpath.operations import protected_operations
 
 router = APIRouter(prefix="/api/v1", tags=["setup"])
 COMPONENTS = ("ollama", "model", "wsl", "kali")
@@ -36,10 +37,10 @@ class SetupOperationController:
         self._state_lock = Lock()
         self._active: tuple[ComponentName, Event] | None = None
 
-    def begin(self, component: ComponentName) -> Event | None:
+    def begin(self, component: ComponentName, cancelled: Event | None = None) -> Event | None:
         if not self._operation_lock.acquire(blocking=False):
             return None
-        event = Event()
+        event = cancelled if cancelled is not None else Event()
         with self._state_lock:
             self._active = (component, event)
         return event
@@ -131,9 +132,9 @@ def _progress(_completed: int, _total: int | None) -> None:
     """The synchronous MVP has no persisted progress stream yet."""
 
 
-def _repair(request: Request, component: ComponentName, consent: bool) -> SetupStage:
+def _repair(request: Request, component: ComponentName, consent: bool, cancellation: Event) -> SetupStage:
     operations = _operations(request)
-    cancelled = operations.begin(component)
+    cancelled = operations.begin(component, cancellation)
     if cancelled is None:
         raise HTTPException(status_code=409, detail="Another setup operation is in progress")
     try:
@@ -156,12 +157,14 @@ def _repair(request: Request, component: ComponentName, consent: bool) -> SetupS
 
 @router.get("/setup", response_model=SetupResponse)
 def get_setup(request: Request) -> SetupResponse:
-    return SetupResponse(components=_component_stages(request))
+    with protected_operations(request).operation():
+        return SetupResponse(components=_component_stages(request))
 
 
 @router.get("/diagnostics", response_model=DiagnosticsResponse)
 def diagnostics(request: Request) -> DiagnosticsResponse:
-    components = _component_stages(request)
+    with protected_operations(request).operation():
+        components = _component_stages(request)
     return DiagnosticsResponse(
         version=__version__,
         components={
@@ -178,7 +181,8 @@ def repair_setup(
     component: str, payload: SetupRepairRequest, request: Request
 ) -> SetupComponentStatus:
     fixed_component = _component_or_404(component)
-    return _as_status(fixed_component, _repair(request, fixed_component, payload.consent))
+    with protected_operations(request).operation(cancellable=True) as cancelled:
+        return _as_status(fixed_component, _repair(request, fixed_component, payload.consent, cancelled))
 
 
 @router.post("/setup/{component}/cancel", response_model=SetupComponentStatus)
