@@ -56,16 +56,16 @@ class FakeWslSetup:
 
 
 @pytest.fixture
-def app(tmp_path):
-    value = create_app(Settings(database_url=f"sqlite:///{tmp_path / 'setup.db'}"))
+def app(tmp_path, security_config):
+    value = create_app(Settings(database_url=f"sqlite:///{tmp_path / 'setup.db'}"), security=security_config)
     value.state.ollama_setup = FakeOllamaSetup()
     value.state.wsl_setup = FakeWslSetup()
     return value
 
 
 @pytest.fixture
-def client(app):
-    with TestClient(app) as value:
+def client(app, client_options):
+    with TestClient(app, **client_options) as value:
         yield value
 
 

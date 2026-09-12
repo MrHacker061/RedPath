@@ -17,13 +17,15 @@ export class ApiError extends Error {
 }
 
 export class RedPathApi {
-  constructor({ baseUrl = "/api/v1", fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS, setTimeoutImpl = globalThis.setTimeout, clearTimeoutImpl = globalThis.clearTimeout } = {}) {
+  constructor({ baseUrl = "/api/v1", csrfToken = null, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS, setTimeoutImpl = globalThis.setTimeout, clearTimeoutImpl = globalThis.clearTimeout } = {}) {
     if (typeof fetchImpl !== "function") throw new TypeError("A fetch implementation is required.");
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.fetchImpl = fetchImpl;
     this.timeoutMs = timeoutMs;
     this.setTimeoutImpl = setTimeoutImpl;
     this.clearTimeoutImpl = clearTimeoutImpl;
+    this.csrfToken = csrfToken;
+    this.bootstrapPromise = null;
   }
 
   async getHealth() {
@@ -95,12 +97,14 @@ export class RedPathApi {
 
   async request(path, options = {}) {
     const { timeoutMs = this.timeoutMs, ...requestOptions } = options;
+    const mutating = !["GET", "HEAD", "OPTIONS"].includes((requestOptions.method || "GET").toUpperCase());
+    if (mutating && !this.csrfToken) await this.bootstrap();
     const controller = new AbortController();
     const timeout = this.setTimeoutImpl(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         ...requestOptions,
-        headers: { Accept: "application/json", ...requestOptions.headers },
+        headers: { Accept: "application/json", ...requestOptions.headers, ...(mutating ? { "X-RedPath-Session": this.csrfToken } : {}) },
         signal: controller.signal,
         credentials: "same-origin",
       });
@@ -125,6 +129,19 @@ export class RedPathApi {
     } finally {
       this.clearTimeoutImpl(timeout);
     }
+  }
+
+  async bootstrap() {
+    if (!this.bootstrapPromise) {
+      this.bootstrapPromise = this.request("/desktop-session", { headers: { "X-RedPath-Bootstrap": "1" }, cache: "no-store" })
+        .then((payload) => {
+          if (typeof payload?.csrf_token !== "string" || !/^[A-Za-z0-9_-]{43,128}$/.test(payload.csrf_token)) {
+            throw new ApiError("RedPath desktop session is unavailable.", { code: "INVALID_RESPONSE" });
+          }
+          this.csrfToken = payload.csrf_token;
+        }).catch((error) => { this.bootstrapPromise = null; throw error; });
+    }
+    return this.bootstrapPromise;
   }
 }
 

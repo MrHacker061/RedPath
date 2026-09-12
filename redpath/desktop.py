@@ -16,6 +16,9 @@ from threading import Thread
 from typing import Any
 from urllib.parse import urlsplit
 
+from redpath.local_security import LocalSecurityConfig
+from redpath.windows_instance import InstanceLockError, WindowsInstanceMutex
+
 
 class DesktopStartupError(RuntimeError):
     """An application-owned error safe to display in a native dialog."""
@@ -39,11 +42,10 @@ def find_loopback_port() -> int:
         listener.close()
 
 
-def _create_app() -> Any:
-    # Reuse the existing app; importing it twice would initialize storage twice.
-    from redpath.app import app
+def _create_app(security: LocalSecurityConfig) -> Any:
+    from redpath.app import create_app
 
-    return app
+    return create_app(security=security)
 
 
 def _create_server(app: Any, port: int) -> Any:
@@ -119,9 +121,12 @@ class DesktopHost:
         self,
         server_factory: Callable[[Any, int], Any] = _create_server,
         health_probe: Callable[[str, float], bool] = _health_probe,
+        instance_factory: Callable[[], WindowsInstanceMutex] = WindowsInstanceMutex,
     ) -> None:
         self.server_factory = server_factory
         self.health_probe = health_probe
+        self.instance_factory = instance_factory
+        self.instance: WindowsInstanceMutex | None = None
         self.server: Any = None
         self.thread: Thread | None = None
         self.listener: socket.socket | None = None
@@ -139,10 +144,14 @@ class DesktopHost:
             return self.url
         try:
             self._failed = False
+            if self.instance is None:
+                instance = self.instance_factory()
+                instance.acquire()
+                self.instance = instance
             # Keep the OS-assigned port reserved until Uvicorn takes ownership.
             self.listener = _loopback_socket()
             port = self.listener.getsockname()[1]
-            self.server = self.server_factory(_create_app(), port)
+            self.server = self.server_factory(_create_app(LocalSecurityConfig(port)), port)
             self.thread = Thread(target=self._serve, name="RedPath HTTP", daemon=False)
             self.thread.start()
             url = f"http://127.0.0.1:{port}"
@@ -162,6 +171,8 @@ class DesktopHost:
                 time.sleep(max(0, min(0.05, deadline - time.monotonic())))
         except BaseException as error:
             self.stop()
+            if isinstance(error, InstanceLockError):
+                raise DesktopStartupError(f"{error}: Close the other RedPath instance before restarting.") from None
             if isinstance(error, (DesktopStartupError, KeyboardInterrupt, SystemExit)):
                 raise
             raise DesktopStartupError("DESKTOP_SERVER_FAILED: RedPath could not start. Check local storage and reinstall RedPath if needed.") from None
@@ -178,10 +189,14 @@ class DesktopHost:
                     self.thread.join(timeout=1)
                 if self.thread.is_alive():
                     raise DesktopStartupError("DESKTOP_SHUTDOWN_TIMEOUT: RedPath could not stop its server. Close RedPath in Task Manager before restarting.")
+                self.thread = None
         finally:
             if self.listener is not None:
                 self.listener.close()
                 self.listener = None
+            if self.instance is not None and (self.thread is None or not self.thread.is_alive()):
+                self.instance.release()
+                self.instance = None
 
 
 def _require_windows() -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -138,6 +140,7 @@ def test_default_cancellable_runner_terminates_then_kills_a_fake_wsl_process(tmp
         def __init__(self) -> None:
             self.terminated = False
             self.killed = False
+            self.stdout, self.stderr = BytesIO(), BytesIO()
 
         def poll(self):
             return None
@@ -167,20 +170,22 @@ def test_default_cancellable_runner_terminates_then_kills_a_fake_wsl_process(tmp
     assert popen.call_args.kwargs["shell"] is False
 
 
-def test_default_cancellable_runner_rejects_cancel_arriving_during_communicate(tmp_path):
+def test_default_cancellable_runner_rejects_cancel_arriving_during_output_read(tmp_path):
     from redpath_setup import wsl
 
     cancelled = Event()
 
+    class CancellingStream(BytesIO):
+        def read(self, size):
+            cancelled.set()
+            return super().read(size)
+
     class CompletingProcess:
         returncode = 0
+        stdout, stderr = CancellingStream(b"ready"), BytesIO()
 
         def poll(self):
             return 0
-
-        def communicate(self, timeout):
-            cancelled.set()
-            return "ready", ""
 
     with patch("redpath_setup.wsl.subprocess.Popen", return_value=CompletingProcess()):
         with pytest.raises(wsl.WslOperationCancelled):
@@ -407,13 +412,37 @@ def test_downloader_type_contract_accepts_the_concrete_artifact_model():
 def test_default_runner_uses_argument_array_without_a_shell(tmp_path):
     from redpath_setup import wsl
 
-    completed = SimpleNamespace(returncode=0, stdout="safe", stderr="")
-    with patch("redpath_setup.wsl.subprocess.run", return_value=completed) as run:
+    completed = SimpleNamespace(returncode=0, stdout=BytesIO(b"safe"), stderr=BytesIO(), poll=lambda: 0)
+    with patch("redpath_setup.wsl.subprocess.Popen", return_value=completed) as run:
         assert wsl._run(["wsl.exe", "--status"], tmp_path, 10) == ProcessResult(0, "safe", "")
 
     argv, kwargs = run.call_args
     assert argv[0] == ["wsl.exe", "--status"]
     assert kwargs["shell"] is False
-    assert kwargs["capture_output"] is True
-    assert kwargs["text"] is True
-    assert kwargs["timeout"] == 10
+    assert kwargs["stdout"] == subprocess.PIPE
+    assert kwargs["stderr"] == subprocess.PIPE
+    assert kwargs["bufsize"] == 0
+
+
+@pytest.mark.parametrize("stdout,stderr", [("Default Version: 2\n[output truncated]", ""), ("Default Version: 2", "warning\n[output truncated]")])
+def test_truncated_status_cannot_establish_wsl_identity(tmp_path, stdout, stderr):
+    from redpath_setup.wsl import WslSetup
+
+    setup = WslSetup(tmp_path, runner=RecordingRunner([ProcessResult(0, stdout, stderr)]))
+    assert setup.inspect_wsl().status != "ready"
+
+
+def test_truncated_distro_listing_cannot_hide_conflicting_identity(tmp_path):
+    from redpath_setup.wsl import WslSetup
+
+    setup = WslSetup(tmp_path, runner=RecordingRunner([
+        ProcessResult(0, "Default Version: 2"), ProcessResult(0, "RedPath-Kali\n[output truncated]"), ProcessResult(0),
+    ]))
+    assert setup.inspect_kali().status != "ready"
+
+
+def test_truncated_setup_output_cannot_hide_restart_requirement(tmp_path):
+    from redpath_setup.wsl import WslSetup
+
+    setup = WslSetup(tmp_path, runner=RecordingRunner(), cancellable_runner=lambda *_: ProcessResult(0, "ready\n[output truncated]"))
+    assert setup.enable(True).status == "failed"

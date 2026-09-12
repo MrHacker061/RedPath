@@ -56,7 +56,7 @@ class FakeModel(RuleBasedProvider):
 
 
 @pytest.fixture
-def desktop_client(tmp_path, monkeypatch):
+def desktop_client(tmp_path, monkeypatch, security_config, client_options):
     def forbidden(*_args, **_kwargs):
         raise AssertionError('External process or network access is forbidden in this workflow')
 
@@ -65,12 +65,12 @@ def desktop_client(tmp_path, monkeypatch):
     monkeypatch.setattr('socket.create_connection', forbidden)
     monkeypatch.setattr('urllib.request.urlopen', forbidden)
     paths = AppPaths.from_environment(str(tmp_path))
-    app = create_app(Settings(database_url=f"sqlite:///{paths.database_file}"), paths)
+    app = create_app(Settings(database_url=f"sqlite:///{paths.database_file}"), paths, security=security_config)
     app.state.ollama_setup = FakeOllamaSetup()
     app.state.wsl_setup = FakeWslSetup()
     app.state.llm_provider = FakeModel()
     app.state.action_dispatcher = WSLActionDispatcher(app.state.wsl_setup)
-    with TestClient(app) as client:
+    with TestClient(app, **client_options) as client:
         yield client, app.state.wsl_setup
 
 

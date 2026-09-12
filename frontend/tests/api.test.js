@@ -1,10 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ApiError, RedPathApi, SETUP_OPERATION_TIMEOUT_MS, normalizeExplanation, normalizeFinding, normalizeHealth } from "../api.js";
+import { ApiError, RedPathApi as ApiClient, SETUP_OPERATION_TIMEOUT_MS, normalizeExplanation, normalizeFinding, normalizeHealth } from "../api.js";
+
+// Route tests inject a session token; bootstrap tests use the production client.
+class RedPathApi extends ApiClient {
+  constructor(options) { super({ csrfToken: "a".repeat(43), ...options }); }
+}
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
+
+test("mutations bootstrap one session token and send it on every mutation", async () => {
+  const requests = [];
+  const api = new ApiClient({ fetchImpl: async (url, options) => {
+    requests.push({ url, options });
+    return jsonResponse(url.endsWith("/desktop-session") ? { csrf_token: "a".repeat(43) } : { active: true });
+  } });
+  await api.activateEmergencyStop();
+  await api.clearEmergencyStop();
+  assert.deepEqual(requests.map(({ url }) => url), ["/api/v1/desktop-session", "/api/v1/emergency-stop", "/api/v1/emergency-stop/clear"]);
+  assert.equal(requests[0].options.headers["X-RedPath-Bootstrap"], "1");
+  for (const request of requests.slice(1)) assert.equal(request.options.headers["X-RedPath-Session"], "a".repeat(43));
+});
+
+test("failed or malformed bootstrap never sends a mutating request", async () => {
+  for (const payload of [{}, { csrf_token: "short" }]) {
+    const requests = [];
+    const api = new ApiClient({ fetchImpl: async (url) => { requests.push(url); return jsonResponse(payload); } });
+    await assert.rejects(api.activateEmergencyStop(), { code: "INVALID_RESPONSE" });
+    assert.deepEqual(requests, ["/api/v1/desktop-session"]);
+  }
+});
 
 test("API client reads Worker 1's versioned health endpoint", async () => {
   let requestedUrl;

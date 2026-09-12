@@ -33,6 +33,9 @@ class FakeResponse:
     def read(self, size: int = -1) -> bytes:
         return self._stream.read(size)
 
+    def read1(self, size: int = -1) -> bytes:
+        return self.read(size)
+
     def close(self) -> None:
         self._stream.close()
 
@@ -51,7 +54,7 @@ class ChunkedResponse(FakeResponse):
 
 
 def fake_opener(body: bytes, url: str = "https://example.test/a"):
-    def open_url(_request):
+    def open_url(_request, *, timeout):
         return FakeResponse(body, url)
 
     return open_url
@@ -106,7 +109,7 @@ def test_download_cancellation_removes_partial_file(tmp_path):
             tmp_path,
             cancel_after_first,
             cancelled,
-            opener=lambda _request: ChunkedResponse([first_chunk, b"second chunk"]),
+            opener=lambda _request, **_kwargs: ChunkedResponse([first_chunk, b"second chunk"]),
         )
     assert (len(first_chunk), len(first_chunk) + len(b"second chunk")) in progress
     assert not (tmp_path / "a.bin").exists()

@@ -21,12 +21,12 @@ from redpath.models import Action, Approval, AuthorizedTarget, Finding, LabSessi
 
 
 @pytest.fixture
-def app(tmp_path):
-    return create_app(Settings(database_url=f"sqlite:///{tmp_path / 'redpath-test.db'}"))
+def app(tmp_path, security_config):
+    return create_app(Settings(database_url=f"sqlite:///{tmp_path / 'redpath-test.db'}"), security=security_config)
 
 
-def test_health_endpoint_and_schema_creation(app):
-    with TestClient(app) as client:
+def test_health_endpoint_and_schema_creation(app, client_options):
+    with TestClient(app, **client_options) as client:
         response = client.get("/api/v1/health")
     assert response.status_code == 200
     payload = response.json()
@@ -39,8 +39,8 @@ def test_health_endpoint_and_schema_creation(app):
     assert {"lab_sessions", "authorized_targets", "proposals", "policy_decisions"} <= set(inspect(app.state.engine).get_table_names())
 
 
-def test_fastapi_serves_desktop_shell(app):
-    with TestClient(app) as client:
+def test_fastapi_serves_desktop_shell(app, client_options):
+    with TestClient(app, **client_options) as client:
         response = client.get("/")
 
         assert response.status_code == 200

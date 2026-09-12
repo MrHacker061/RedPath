@@ -41,7 +41,9 @@ class FakeServer:
 def environment(monkeypatch):
     listener = FakeSocket()
     monkeypatch.setattr(desktop.socket, "socket", lambda *_: listener)
-    monkeypatch.setattr(desktop, "_create_app", lambda: object())
+    monkeypatch.setattr(desktop, "_create_app", lambda _security: object())
+    monkeypatch.setattr(desktop.WindowsInstanceMutex, "acquire", lambda _: None)
+    monkeypatch.setattr(desktop.WindowsInstanceMutex, "release", lambda _: None)
     return listener
 
 
@@ -63,7 +65,7 @@ def test_host_returns_only_after_health_and_stops_idempotently(environment):
         host.stop()
         host.stop()
     assert server.should_exit
-    assert not host.thread.is_alive()
+    assert host.thread is None
     assert environment.closed
 
 
@@ -74,7 +76,7 @@ def test_health_timeout_stops_and_joins_server(environment, monkeypatch):
     host = desktop.DesktopHost(server_factory=lambda *_: server, health_probe=lambda *_: False)
     with pytest.raises(desktop.DesktopStartupError, match="DESKTOP_HEALTH_TIMEOUT"):
         host.start()
-    assert server.should_exit and not host.thread.is_alive()
+    assert server.should_exit and host.thread is None
     assert environment.closed
 
 
@@ -85,7 +87,7 @@ def test_server_failure_has_stable_message_and_cleanup(environment):
     with pytest.raises(desktop.DesktopStartupError, match="DESKTOP_SERVER_FAILED") as error:
         host.start()
     assert "sensitive" not in str(error.value)
-    assert environment.closed and not host.thread.is_alive()
+    assert environment.closed and host.thread is None
 
 
 def test_health_wait_does_not_sleep_past_deadline(environment, monkeypatch):
@@ -117,7 +119,7 @@ def test_late_success_cannot_mark_host_ready(environment, monkeypatch):
         with pytest.raises(desktop.DesktopStartupError, match="DESKTOP_HEALTH_TIMEOUT"):
             host.start()
         assert host.url is None
-        assert not host.thread.is_alive()
+        assert host.thread is None
     finally:
         host.stop()
 

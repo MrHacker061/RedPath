@@ -12,8 +12,8 @@ import subprocess
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from threading import Event
-from typing import Protocol
+from threading import Event, Lock, Thread
+from typing import BinaryIO, Protocol
 
 from redpath_kali import ProcessResult
 
@@ -27,6 +27,8 @@ STATUS_TIMEOUT_SECONDS = 30
 ENABLE_TIMEOUT_SECONDS = 120
 IMPORT_TIMEOUT_SECONDS = 1_800
 MAX_ACTION_TIMEOUT_SECONDS = 60
+MAX_CAPTURE_BYTES = 32768
+PIPE_CHUNK_BYTES = 4096
 
 
 class WslSetupError(RuntimeError):
@@ -55,62 +57,104 @@ Downloader = Callable[[Artifact, Path, Progress, Event], Path]
 
 def _run(argv: Sequence[str], cwd: Path, timeout: float) -> ProcessResult:
     """Run one fixed WSL argv without a shell or inherited interactive input."""
-    completed = subprocess.run(
-        list(argv),
-        cwd=cwd,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        check=False,
-        shell=False,
-    )
-    return ProcessResult(completed.returncode, completed.stdout, completed.stderr)
+    return _run_cancellable(argv, cwd, timeout, Event())
 
 
-def _stop(process: subprocess.Popen[str]) -> None:
+def _stop(process: subprocess.Popen[bytes], deadline: float) -> None:
     process.terminate()
     try:
-        process.wait(timeout=0.1)
+        process.wait(timeout=max(0, min(0.1, deadline - time.monotonic())))
     except subprocess.TimeoutExpired:
         process.kill()
         try:
-            process.wait(timeout=0.1)
+            process.wait(timeout=max(0, min(0.1, deadline - time.monotonic())))
         except subprocess.TimeoutExpired:
             pass
+
+
+class _BoundedDrain:
+    """Retain a prefix and discard excess while continuously draining a pipe."""
+
+    def __init__(self, stream: BinaryIO, stopped: Event) -> None:
+        self.stream, self.stopped = stream, stopped
+        self.data = bytearray()
+        self.lock = Lock()
+        self.done = Event()
+        self.failed = False
+        self.truncated = False
+        self.thread = Thread(target=self.read, name="RedPath WSL output", daemon=True)
+
+    def read(self) -> None:
+        try:
+            while not self.stopped.is_set():
+                chunk = self.stream.read(PIPE_CHUNK_BYTES)
+                if not chunk:
+                    break
+                with self.lock:
+                    available = MAX_CAPTURE_BYTES - len(self.data)
+                    self.data.extend(chunk[:available])
+                    self.truncated |= len(chunk) > available
+        except Exception:
+            self.failed = True
+        finally:
+            # Never close another thread's blocked buffered stream. If a
+            # descendant inherits a writer, this daemon closes at eventual EOF.
+            try:
+                self.stream.close()
+            except (OSError, ValueError):
+                self.failed = True
+            self.done.set()
+
+    def text(self) -> str:
+        with self.lock:
+            return self.data.decode("utf-8", errors="replace") + ("\n[output truncated]" if self.truncated else "")
 
 
 def _run_cancellable(
     argv: Sequence[str], cwd: Path, timeout: float, cancelled: Event
 ) -> ProcessResult:
-    """Run a fixed WSL setup command with bounded termination on cancellation."""
+    """Drain both streams concurrently with bounded memory and termination."""
     deadline = time.monotonic() + timeout
     process = subprocess.Popen(
         list(argv), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", shell=False,
+        stderr=subprocess.PIPE, bufsize=0, shell=False,
     )
+    stopped = Event()
+    readers = [_BoundedDrain(process.stdout, stopped), _BoundedDrain(process.stderr, stopped)]
+    pipe_deadline = deadline
     try:
+        for reader in readers:
+            reader.thread.start()
         while True:
             if cancelled.is_set():
-                _stop(process)
                 raise WslOperationCancelled()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                _stop(process)
-                raise subprocess.TimeoutExpired(list(argv), timeout)
-            try:
-                stdout, stderr = process.communicate(timeout=min(0.1, remaining))
-                if cancelled.is_set():
-                    raise WslOperationCancelled()
-                return ProcessResult(process.returncode, stdout or "", stderr or "")
-            except subprocess.TimeoutExpired:
-                continue
-    except BaseException:
-        if process.poll() is None:
-            _stop(process)
-        raise
+                raise subprocess.TimeoutExpired(list(argv), timeout, output=readers[0].text(), stderr=readers[1].text())
+            if any(reader.failed for reader in readers):
+                raise WslSetupError("WSL output could not be read")
+            returncode = process.poll()
+            if returncode is not None:
+                if not all(reader.done.is_set() for reader in readers):
+                    pipe_deadline = min(pipe_deadline, time.monotonic() + 0.25)
+                    if time.monotonic() >= pipe_deadline:
+                        raise WslSetupError("WSL output pipes did not close")
+                else:
+                    if cancelled.is_set():
+                        raise WslOperationCancelled()
+                    if any(reader.failed for reader in readers):
+                        raise WslSetupError("WSL output could not be read")
+                    return ProcessResult(returncode, readers[0].text(), readers[1].text())
+            cancelled.wait(min(0.02, remaining, max(0, pipe_deadline - time.monotonic())))
+    finally:
+        stopped.set()
+        try:
+            if process.poll() is None:
+                _stop(process, deadline)
+        finally:
+            for reader in readers:
+                if reader.thread.ident is not None:
+                    reader.thread.join(timeout=max(0, min(0.05, deadline - time.monotonic())))
 
 
 def _normalized_wsl_text(*values: str) -> str:
@@ -173,6 +217,8 @@ class WslSetup:
         result = self.runner(tuple(argv), self._cwd(), timeout)
         if not isinstance(result, ProcessResult):
             raise WslSetupError("WSL runner returned an invalid result")
+        if argv[1] in {"--status", "--list"}:
+            self._require_complete_output(result)
         return result
 
     def _invoke_cancellable(
@@ -181,7 +227,15 @@ class WslSetup:
         result = self.cancellable_runner(tuple(argv), self._cwd(), timeout, cancelled)
         if not isinstance(result, ProcessResult):
             raise WslSetupError("WSL runner returned an invalid result")
+        self._require_complete_output(result)
         return result
+
+    @staticmethod
+    def _require_complete_output(result: ProcessResult) -> None:
+        # Truncation is acceptable for action evidence, but not for identity or
+        # setup decisions: an omitted suffix could contain a conflict/restart.
+        if any(value.endswith("\n[output truncated]") for value in (result.stdout, result.stderr)):
+            raise WslSetupError("WSL setup output exceeded the capture limit")
 
     def _distribution_names(self) -> tuple[str, ...]:
         result = self._invoke(("wsl.exe", "--list", "--quiet"), STATUS_TIMEOUT_SECONDS)

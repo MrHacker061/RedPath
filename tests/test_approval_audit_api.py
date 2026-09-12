@@ -19,13 +19,13 @@ from redpath.models import (
 
 
 @pytest.fixture
-def app(tmp_path):
-    return create_app(Settings(database_url=f"sqlite:///{tmp_path / 'approvals.db'}"))
+def app(tmp_path, security_config):
+    return create_app(Settings(database_url=f"sqlite:///{tmp_path / 'approvals.db'}"), security=security_config)
 
 
 @pytest.fixture
-def client(app):
-    with TestClient(app) as value:
+def client(app, client_options):
+    with TestClient(app, **client_options) as value:
         yield value
 
 

@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
@@ -15,6 +15,7 @@ from redpath.execution_api import router as execution_router
 from redpath.execution_fence import ExecutionFence
 from redpath.nmap_parser import parse_nmap_xml_bytes
 from redpath.runtime import AppPaths
+from redpath.local_security import LocalRequestProtection, LocalSecurityConfig
 from redpath.approval_api import router as approval_router
 from redpath.session_api import router as session_router
 from redpath.setup_api import SetupOperationController, router as setup_router
@@ -27,7 +28,8 @@ import redpath.models  # noqa: F401
 
 
 def create_app(
-    settings: Settings | None = None, paths: AppPaths | None = None
+    settings: Settings | None = None, paths: AppPaths | None = None,
+    *, security: LocalSecurityConfig | None = None,
 ) -> FastAPI:
     config = settings or get_settings()
     app_paths = paths or AppPaths.from_environment()
@@ -45,6 +47,9 @@ def create_app(
         engine.dispose()
 
     app = FastAPI(title=config.app_name, version=__version__, lifespan=lifespan)
+    local_security = security or LocalSecurityConfig(config.port)
+    app.add_middleware(LocalRequestProtection, security=local_security)
+    app.state.local_security = local_security
     app.state.settings = config
     app.state.paths = app_paths
     app.state.engine = engine
@@ -77,6 +82,12 @@ def create_app(
     def desktop_shell() -> FileResponse:
         return FileResponse(app_paths.frontend_dir / "index.html")
 
+    @app.get("/api/v1/desktop-session", include_in_schema=False)
+    def desktop_session() -> JSONResponse:
+        return JSONResponse({"csrf_token": local_security.csrf_token}, headers={
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        })
+
     @app.get("/api/v1/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         try:
@@ -108,6 +119,3 @@ def create_app(
             )
 
     return app
-
-
-app = create_app()
