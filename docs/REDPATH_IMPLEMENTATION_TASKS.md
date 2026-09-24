@@ -1,5 +1,7 @@
 # RedPath Four-Worker Feature Implementation To-Do List
 
+**Historical planning snapshot, not the current architecture contract:** Worker assignments and milestones below are preserved for team reconciliation. VM file paths below refer to code that has been removed; those tasks must not be executed as written. Older optional-Kali/VM, browser-first, and 7B-model assumptions are superseded by the [target architecture](REDPATH_ARCHITECTURE.md) and [non-executable contracts](REDPATH_CONTRACTS.md). No teammate hours, ownership, or GitLab work item was changed by this repository update.
+
 ## Project goal
 
 Build a working RedPath MVP that accepts a lesson and separate authorized target, imports Nmap evidence, asks Ollama for a structured recommendation, checks it with a policy engine, requests approval, runs a fixed action through the headless Kali VM, and creates a learning report.

@@ -25,7 +25,8 @@ python -m pytest
 ### File Organization
 - `/redpath` - Core application code
 - `/redpath_ai` - Local model integration
-- `/redpath_kali` - Kali lab integration
+- `/redpath_kali` - planned private Kali-container terminal boundary (not implemented)
+- `/redpath_desktop` - planned host launcher/Compose boundary (not implemented)
 - `/scanner` - Authorized scanning components
 - `/frontend` - User interface
 - `/tests` - Automated tests

@@ -1,4 +1,5 @@
-"""Safe, fixed-operation integration with RedPath's managed Kali VM."""
-from .vm import KaliVMError, KaliVMManager, OperationResult, ProcessResult, SSHConfig, VMState, parse_ssh_config, parse_status
+"""Planned Kali-container terminal boundary; no SSH implementation yet."""
 
-__all__ = ["KaliVMError", "KaliVMManager", "OperationResult", "ProcessResult", "SSHConfig", "VMState", "parse_ssh_config", "parse_status"]
+from .terminal import close_terminal, open_terminal, resize_terminal
+
+__all__ = ["open_terminal", "resize_terminal", "close_terminal"]

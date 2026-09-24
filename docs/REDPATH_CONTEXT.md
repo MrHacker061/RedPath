@@ -1,5 +1,7 @@
 # RedPath Project Context and Agent Handoff
 
+**Historical capstone context:** This handoff preserves earlier ideas and coursework details, including references to VM files that have now been removed. The [current-versus-planned architecture](REDPATH_ARCHITECTURE.md) and [non-executable contracts](REDPATH_CONTRACTS.md) govern the agreed native desktop, required Compose Kali, and selected Qwen3 candidate. Do not treat the older optional-VM, browser-first, or model notes below as the current build plan.
+
 ## Purpose of this file
 
 This file gives another AI agent the full working context for RedPath. It explains the project idea, the decisions already made, the capstone requirements, the current documents and forms, the technical direction, and the limits that should remain part of the design.
@@ -175,7 +177,7 @@ Likely components:
 - **Reporting:** Structured JSON plus a readable web or PDF report.
 - **Testing:** Unit tests, policy tests, parser fixtures, simulated model responses, and isolated integration labs.
 
-The existing workspace already includes a Windows-managed headless Kali VM and an authorized private-lab scanner. Relevant local files include:
+At the time this historical context was written, the workspace included a Windows-managed headless Kali VM and an authorized private-lab scanner. The VM files listed below have since been removed; the scanner remains:
 
 - `vm/KaliVM.ps1`
 - `vm/KaliVM.cmd`

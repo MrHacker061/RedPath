@@ -1,30 +1,21 @@
 # RedPath Ollama setup
 
-RedPath uses Ollama only as a local recommendation and explanation provider. It
-does not give Ollama a shell, SSH connection, scanner, or action-execution tool.
-All proposals must still pass application policy and human approval.
+**Status:** The host-loopback provider below exists today. `redpath_ai.compose.connect_ollama` is only a typed placeholder that raises `NotImplementedError`; the Compose/Ollama setup and selected Qwen3 model are not integrated. See [architecture](REDPATH_ARCHITECTURE.md) and [contracts](REDPATH_CONTRACTS.md).
 
-## Suggested MVP model
+## Existing provider
 
-Install Ollama on the Windows host, then download the configured quantized model:
+`redpath_ai/providers.py` currently defines a local `OllamaProvider` that accepts only `http://127.0.0.1:11434`, defaults to `qwen2.5:7b-instruct-q4_K_M`, and returns structured recommendations/explanations with a deterministic fallback. That 7B name is the **current code default**, not the selected target model. The existing provider does not give Ollama a shell, SSH connection, scanner, or action-execution tool. Its strict response schema and `ProposedStep.validate_against` check untrusted output against known findings and fixed action definitions; backend policy and approval remain separate.
+
+For this existing host-based prototype only, install Ollama separately and pull its current configured model:
 
 ```powershell
 ollama pull qwen2.5:7b-instruct-q4_K_M
 ```
 
-The provider accepts only `http://127.0.0.1:11434`, so Ollama is not exposed to
-the browser or LAN. Model output is checked against a strict schema and against
-the exact finding IDs, action names, and argument names supplied by the backend.
-Invalid output is retried once and then replaced by the deterministic safe
-fallback.
+## Planned Compose model
 
-Model arguments remain untrusted until `ProposedStep.validate_against` checks
-their exact names and types against a trusted action definition. Target IDs must
-equal the authorized context target, while ports and protocols must match a
-supporting finding. `to_canonical_proposal` then emits Worker 1's exact backend
-proposal shape. The provider exposes stable `AI_*` result codes for sanitized
-audit records; raw exceptions and model content should never be used as codes.
+The selected evaluation candidate is [`IamLucif3r/Qwen3-4B-Instruct-2507-Abliterated` Q4_K_M](https://huggingface.co/IamLucif3r/Qwen3-4B-Instruct-2507-Abliterated), served by a private Ollama container with persistent model storage. The native launcher should guide a one-time online image/model download and report progress or failures. The app would call Ollama by its private Compose service name, **not** by the current hard-coded loopback URL. Neither the model nor the app container receives the host Docker socket; Ollama has no shell or target access.
 
-Do not fine-tune the MVP. Test prompts, reviewed examples, keyword retrieval,
-and evaluation scenarios first. Consider a LoRA adapter only after repeated,
-measured failures show that prompting and retrieval are not enough.
+The model card offers an Ollama path but discusses chat-template compatibility and reports only a small native tool-call smoke test, not dependable multi-step tool use. A future implementation must validate the exact template and tool schemas, measure failure rates and CPU latency, pin the revision and artifact digest, and review redistribution terms before bundling it. The approximately 2.5 GB Q4_K_M file is a download/storage figure, not a total RAM or GPU requirement for the app, Kali, Ollama, and host runtime. No low-end performance floor or tool reliability has been verified.
+
+AI tools in the [proposed contracts](REDPATH_CONTRACTS.md) are read-only context providers. An active check is only a proposal that requires exact-target policy validation, learner approval, and audit. If Ollama is missing or slow, terminal and evidence functions remain usable with a visible AI-unavailable state. No alternate model is selected yet.
