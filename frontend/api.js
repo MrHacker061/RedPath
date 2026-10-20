@@ -17,7 +17,7 @@ export class ApiError extends Error {
 }
 
 export class RedPathApi {
-  constructor({ baseUrl = "/api/v1", csrfToken = null, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS, setTimeoutImpl = globalThis.setTimeout, clearTimeoutImpl = globalThis.clearTimeout } = {}) {
+  constructor({ baseUrl = "/api/v1", csrfToken = null, fetchImpl = globalThis.fetch?.bind(globalThis), timeoutMs = DEFAULT_TIMEOUT_MS, setTimeoutImpl = globalThis.setTimeout.bind(globalThis), clearTimeoutImpl = globalThis.clearTimeout.bind(globalThis) } = {}) {
     if (typeof fetchImpl !== "function") throw new TypeError("A fetch implementation is required.");
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.fetchImpl = fetchImpl;
