@@ -1,0 +1,15 @@
+services:
+  api:
+    build: .
+    image: redpath-api
+    environment:
+      REDPATH_PORT: ${REDPATH_PORT:-8000}
+      REDPATH_LOG_LEVEL: ${REDPATH_LOG_LEVEL:-INFO}
+    ports:
+      # Host loopback only, with matching ports: the request guard checks Host: 127.0.0.1:<port>.
+      - "127.0.0.1:${REDPATH_PORT:-8000}:${REDPATH_PORT:-8000}"
+    volumes:
+      - redpath-data:/data
+
+volumes:
+  redpath-data:

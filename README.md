@@ -79,6 +79,31 @@ Important project documents:
 - [Four-worker implementation tasks](./docs/REDPATH_IMPLEMENTATION_TASKS.md)
 - [Local Ollama setup](./docs/OLLAMA_SETUP.md)
 
+## Docker (backend container)
+
+The `api` service runs the same FastAPI app and dashboard on Linux, macOS, or
+Windows through Docker Desktop. It is a development path, not a replacement for
+the Windows desktop MVP.
+
+```powershell
+docker compose up --build
+curl http://127.0.0.1:8000/api/v1/health
+```
+
+Open `http://127.0.0.1:8000` (not `localhost`, which the request guard
+rejects). Inside the container, `python -m redpath.container` binds all
+interfaces. Compose publishes the port on host loopback only, using the same
+port number on both sides because the guard checks `Host: 127.0.0.1:<port>`.
+Set `REDPATH_PORT` in `.env` to change the port. Data lives in the
+`redpath-data` volume at `/data/RedPath`. Run one container per volume, and use
+`docker compose down -v` to delete the data.
+
+WSL, Kali, and Ollama stay on the host. In the container, setup reports them as
+unavailable, and recommendations use the rule-based fallback, because
+`OllamaProvider` only accepts `127.0.0.1:11434`, which is the container itself.
+Do not use the setup screen's repair buttons from the container: they fetch
+Windows installers, and Ollama repair downloads about 1.5 GB before it fails.
+
 ## AI recommendation foundation
 
 Install the Python dependency and run the tests:
