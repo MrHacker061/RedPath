@@ -16,7 +16,7 @@ from redpath.contracts import (
 )
 from redpath_setup.state import SetupStage
 from redpath_setup.manifest import KALI_ARTIFACT, OLLAMA_ARTIFACT
-from redpath_ai.providers import OLLAMA_MODEL
+from redpath_ai.models import selected_model
 from redpath.operations import protected_operations
 
 router = APIRouter(prefix="/api/v1", tags=["setup"])
@@ -24,7 +24,6 @@ COMPONENTS = ("ollama", "model", "wsl", "kali")
 ComponentName = Literal["ollama", "model", "wsl", "kali"]
 _DOWNLOAD_METADATA: dict[str, tuple[str | None, int | None]] = {
     "ollama": (OLLAMA_ARTIFACT.version, OLLAMA_ARTIFACT.size_bytes),
-    "model": (OLLAMA_MODEL, 4_683_087_332),
     "kali": (KALI_ARTIFACT.version, KALI_ARTIFACT.size_bytes),
     "wsl": (None, None),
 }
@@ -90,10 +89,18 @@ def _cancelled(component: ComponentName) -> SetupStage:
     return SetupStage(component, "needs_attention", "CANCELLED", "The setup operation was cancelled.")
 
 
-def _as_status(component: str, stage: object) -> SetupComponentStatus:
+def _download_metadata(request: Request, component: str) -> tuple[str | None, int | None]:
+    if component == "model":
+        # The model card follows the REDPATH_MODEL toggle (see redpath_ai/models.py).
+        model = selected_model(request.app.state.settings.model)
+        return model.tag, model.download_bytes
+    return _DOWNLOAD_METADATA[component]
+
+
+def _as_status(request: Request, component: str, stage: object) -> SetupComponentStatus:
     if not isinstance(stage, SetupStage):
         stage = _failed(component, "SETUP_STATUS_UNAVAILABLE")
-    version, download_size_bytes = _DOWNLOAD_METADATA[component]
+    version, download_size_bytes = _download_metadata(request, component)
     return SetupComponentStatus(
         status=stage.status, code=stage.code, detail=stage.detail,
         version=version, download_size_bytes=download_size_bytes,
@@ -120,10 +127,10 @@ def _component_stages(request: Request) -> dict[ComponentName, SetupComponentSta
     except Exception:
         kali_stage = _failed("kali", "WSL_STATUS_UNAVAILABLE")
     return {
-        "ollama": _as_status("ollama", ollama_stage),
-        "model": _as_status("model", model_stage),
-        "wsl": _as_status("wsl", wsl_stage),
-        "kali": _as_status("kali", kali_stage),
+        "ollama": _as_status(request, "ollama", ollama_stage),
+        "model": _as_status(request, "model", model_stage),
+        "wsl": _as_status(request, "wsl", wsl_stage),
+        "kali": _as_status(request, "kali", kali_stage),
     }
 
 
@@ -194,7 +201,7 @@ def repair_setup(
 ) -> SetupComponentStatus:
     fixed_component = _component_or_404(component)
     with protected_operations(request).operation(cancellable=True) as cancelled:
-        return _as_status(fixed_component, _repair(request, fixed_component, payload.consent, cancelled))
+        return _as_status(request, fixed_component, _repair(request, fixed_component, payload.consent, cancelled))
 
 
 @router.post("/setup/{component}/cancel", response_model=SetupComponentStatus)
@@ -204,9 +211,9 @@ def cancel_setup(
     del payload
     fixed_component = _component_or_404(component)
     if not _operations(request).cancel(fixed_component):
-        return _as_status(fixed_component, SetupStage(
+        return _as_status(request, fixed_component, SetupStage(
             fixed_component, "needs_attention", "NO_ACTIVE_OPERATION", "No matching setup operation is active."
         ))
-    return _as_status(fixed_component, SetupStage(
+    return _as_status(request, fixed_component, SetupStage(
         fixed_component, "in_progress", "CANCEL_REQUESTED", "Cancellation was requested."
     ))

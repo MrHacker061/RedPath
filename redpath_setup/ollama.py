@@ -11,7 +11,7 @@ from queue import Empty, Full, Queue
 from threading import Event, Thread
 from typing import Protocol
 
-from redpath_ai.providers import OLLAMA_MODEL, OllamaProvider
+from redpath_ai.providers import OllamaProvider
 from redpath.operations import own_child
 
 from .downloads import DownloadCancelledError, DownloadError, download_verified
@@ -156,7 +156,8 @@ class OllamaSetup:
         self.destination = Path(destination)
         self.runner = runner
         self.downloader = downloader
-        self.provider = provider or OllamaProvider(model=OLLAMA_MODEL)
+        # The provider's model is the one RedPath uses, so it is also the one to check and download.
+        self.provider = provider or OllamaProvider()
 
     def inspect_service(self) -> SetupStage:
         health = self.provider.health()
@@ -217,7 +218,7 @@ class OllamaSetup:
             return self._cancelled()
         try:
             result = self.runner(
-                ["ollama", "pull", OLLAMA_MODEL], self.destination, INSTALL_TIMEOUT_SECONDS, cancelled, progress
+                ["ollama", "pull", self.provider.model], self.destination, INSTALL_TIMEOUT_SECONDS, cancelled, progress
             )
         except ProcessCancelled:
             return self._cancelled()

@@ -5,6 +5,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from redpath.runtime import AppPaths
+from redpath_ai.models import DEFAULT_MODEL, selected_model
 
 
 def _default_database_url() -> str:
@@ -20,12 +21,20 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1024, le=65535)
     database_url: str = Field(default_factory=_default_database_url)
     log_level: str = "INFO"
+    # Which local AI model to use: REDPATH_MODEL in .env. Choices are in redpath_ai/models.py.
+    model: str = DEFAULT_MODEL
 
     @field_validator("host")
     @classmethod
     def require_loopback(cls, value: str) -> str:
         if value != "127.0.0.1":
             raise ValueError("RedPath must bind to a loopback address")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def require_known_model(cls, value: str) -> str:
+        selected_model(value)  # raises with the list of valid choices
         return value
 
     @field_validator("database_url")

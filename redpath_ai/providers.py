@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .models import selected_model
 from .prompts import SYSTEM_PROMPT, explanation_prompt, recommendation_prompt
 from .schemas import (
     ArgumentKind,
@@ -127,7 +128,8 @@ class RuleBasedProvider(LLMProvider):
 
 
 Transport = Callable[[str, dict[str, Any] | None, float], dict[str, Any]]
-OLLAMA_MODEL = "qwen2.5:7b-instruct-q4_K_M"
+# Default model tag; the app passes the REDPATH_MODEL choice explicitly (see models.py).
+OLLAMA_MODEL = selected_model().tag
 
 
 @dataclass(frozen=True)
@@ -231,6 +233,10 @@ class OllamaProvider(LLMProvider):
         body = {
             "model": self.model,
             "stream": False,
+            # Qwen 3.5 "thinks" out loud before answering by default, which slows
+            # it down and can break the strict JSON answer. Models without a
+            # thinking mode (Qwen 2.5) accept and ignore this setting.
+            "think": False,
             "format": schema,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},

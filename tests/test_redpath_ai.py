@@ -310,7 +310,7 @@ class OllamaTests(unittest.TestCase):
 
     def test_health_reports_installed_model(self):
         def transport(url, body, timeout):
-            return {"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]}
+            return {"models": [{"name": "qwen3.5:9b"}]}
 
         health = OllamaProvider(transport=transport).health()
         self.assertTrue(health.available)
