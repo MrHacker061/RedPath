@@ -15,6 +15,7 @@ def isolated_application_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     # Test-local monkeypatches and explicit Settings/AppPaths arguments still win.
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
     monkeypatch.delenv("REDPATH_DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDPATH_MODEL", raising=False)
     monkeypatch.setitem(Settings.model_config, "env_file", None)
     get_settings.cache_clear()
     try:

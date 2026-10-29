@@ -22,6 +22,7 @@ from redpath.session_api import router as session_router
 from redpath.setup_api import SetupOperationController, router as setup_router
 from redpath.stop_api import router as stop_router
 from redpath_ai import OllamaProvider
+from redpath_ai.models import selected_model
 from redpath_kali.wsl_actions import WSLActionDispatcher
 from redpath_setup.ollama import OllamaSetup
 from redpath_setup.wsl import WslSetup
@@ -64,9 +65,9 @@ def create_app(
     app.state.paths = app_paths
     app.state.engine = engine
     app.state.session_factory = session_factory
-    app.state.llm_provider = OllamaProvider()
+    app.state.llm_provider = OllamaProvider(model=selected_model(config.model).tag)
     app.state.execution_fence = ExecutionFence()
-    app.state.ollama_setup = OllamaSetup(app_paths.download_dir)
+    app.state.ollama_setup = OllamaSetup(app_paths.download_dir, provider=app.state.llm_provider)
     app.state.wsl_setup = WslSetup(app_paths.wsl_dir)
     app.state.action_dispatcher = WSLActionDispatcher(app.state.wsl_setup)
     app.state.setup_operations = SetupOperationController()

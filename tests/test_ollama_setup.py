@@ -33,7 +33,7 @@ def tags_provider(models):
 
 
 def installed_provider() -> OllamaProvider:
-    return tags_provider([{"name": "qwen2.5:7b-instruct-q4_K_M"}])[0]
+    return tags_provider([{"name": "qwen3.5:9b"}])[0]
 
 
 def unavailable_provider() -> OllamaProvider:
@@ -142,9 +142,9 @@ def test_model_pull_uses_exact_model_name_and_confirms_loopback_tags(tmp_path):
     from redpath_setup.ollama import OllamaSetup
 
     runner = RecordingRunner()
-    provider, health_calls = tags_provider([{"name": "qwen2.5:7b-instruct-q4_K_M"}])
+    provider, health_calls = tags_provider([{"name": "qwen3.5:9b"}])
     stage = OllamaSetup(tmp_path, runner=runner, provider=provider).pull_model(True, lambda *_: None, Event())
-    assert runner.calls == [["ollama", "pull", "qwen2.5:7b-instruct-q4_K_M"]]
+    assert runner.calls == [["ollama", "pull", "qwen3.5:9b"]]
     assert runner.timeouts == [600]
     assert stage.status == "ready"
     assert health_calls == [("http://127.0.0.1:11434/api/tags", None, 20.0)]
