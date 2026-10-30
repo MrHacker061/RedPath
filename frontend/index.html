@@ -91,28 +91,52 @@
       </div>
     </section>
 
+
     <section id="lessons" aria-labelledby="lessons-title">
       <p class="eyebrow">GUIDED LEARNING</p>
       <h2 id="lessons-title">RedPath Lessons</h2>
 
       <p>
-        Learn cybersecurity concepts through guided lessons
-        before practicing in an authorized lab.
+        Choose a beginner lesson, learn the concepts, and check your
+        understanding before practicing in an authorized lab.
       </p>
 
-      <article>
-        <h3>Lesson 1: Introduction to Network Scanning</h3>
+      <div id="lesson-library" class="lesson-library">
+        <article class="lesson-option">
+          <p class="eyebrow">LESSON 01</p>
+          <h3>Introduction to Network Scanning</h3>
+          <p>
+            Learn about network ports, common services, and how
+            to interpret basic scan results.
+          </p>
+          <p class="detail">Beginner | 3 steps | Simulated practice</p>
+          <button type="button" data-lesson-id="network-scanning">
+            Start Lesson
+          </button>
+        </article>
 
-        <p>
-          Learn about network ports, common services,
-          and how to interpret basic scan results.
-        </p>
+        <article class="lesson-option">
+          <p class="eyebrow">LESSON 02</p>
+          <h3>Introduction to Linux Commands</h3>
+          <p>
+            Learn how to navigate a Linux terminal using
+            pwd, ls, and whoami.
+          </p>
+          <p class="detail">Beginner | 3 steps | Simulated practice</p>
+          <button type="button" data-lesson-id="linux-commands">
+            Start Lesson
+          </button>
+        </article>
+      </div>
 
-        <p class="detail">Beginner | Demo Lesson</p>
+      <article id="active-lesson" hidden>
+        <div class="section-heading lesson-heading">
+          <h3 id="active-lesson-title"></h3>
+          <button id="back-to-lessons" type="button" class="secondary-button">
+            All Lessons
+          </button>
+        </div>
 
-        <button id="start-lesson" type="button">
-          Start Lesson
-        </button>
         <p id="lesson-progress" class="detail" hidden aria-live="polite"></p>
 
         <progress id="lesson-progress-bar" max="3" value="0" hidden aria-label="Lesson progress"
@@ -120,9 +144,9 @@
         </progress>
 
         <div id="lesson-content" hidden aria-live="polite"></div>
-
       </article>
     </section>
+
 
     <section id="lab" aria-labelledby="session-title">
       <p class="eyebrow">AUTHORIZED SESSION</p>

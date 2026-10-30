@@ -1,13 +1,119 @@
 
+/*
+ * RedPath beginner lessons.
+ * All terminal examples are simulated.
+ * No real commands or scans are executed.
+ */
+
+const LESSONS = {
+  "network-scanning": {
+    title: "Introduction to Network Scanning",
+    steps: [
+      {
+        title: "Understanding Network Scanning",
+        paragraphs: [
+          "Network scanning identifies open ports and services on an authorized computer or network. It helps you understand what a system exposes.",
+          "A port is a numbered communication endpoint. Port 22 is commonly used for SSH, and port 80 is commonly used for HTTP.",
+          "Only scan systems you own or have explicit permission to test."
+        ]
+      },
+      {
+        title: "Understanding Scan Results",
+        paragraphs: [
+          "Examine these simulated results from an authorized network scan. No real scan is performed in this lesson."
+        ],
+        example:
+          "PORT     STATE    SERVICE\n" +
+          "22/tcp   open     ssh\n" +
+          "80/tcp   closed   http",
+        afterExample: [
+          "Port 22 is open and associated with SSH. Port 80 is closed in this example.",
+          "An open port does not automatically mean that a system is vulnerable."
+        ]
+      },
+      {
+        title: "Knowledge Check",
+        question:
+          "Based on the previous scan results, which TCP port was open?",
+        choices: ["22/tcp", "80/tcp", "443/tcp"],
+        answer: "22/tcp",
+        correctFeedback:
+          "Correct! Port 22 was open and associated with SSH.",
+        wrongFeedback:
+          "Not quite! Review the simulated scan results and try again."
+      }
+    ],
+    completion:
+      "You learned about ports, services, and interpreting basic network scan results."
+  },
+
+  "linux-commands": {
+    title: "Introduction to Linux Commands",
+    steps: [
+      {
+        title: "Understanding the Linux Terminal",
+        paragraphs: [
+          "The Linux terminal lets you interact with the operating system by entering text commands.",
+          "The pwd command shows your current directory, ls lists files and folders, and whoami shows the current username.",
+          "In RedPath, practice commands only in a controlled, authorized learning environment."
+        ]
+      },
+      {
+        title: "Reading Terminal Output",
+        paragraphs: [
+          "These are simulated Linux terminal examples. No commands are actually executed."
+        ],
+        example:
+          "kali@redpath:~$ pwd\n" +
+          "/home/kali\n\n" +
+          "kali@redpath:~$ ls\n" +
+          "notes.txt  labs\n\n" +
+          "kali@redpath:~$ whoami\n" +
+          "kali",
+        afterExample: [
+          "pwd prints /home/kali, which is the current directory in this example.",
+          "ls lists the contents of that directory, while whoami reports the current username."
+        ]
+      },
+      {
+        title: "Knowledge Check",
+        question:
+          "Which Linux command displays your current directory?",
+        choices: ["ls", "pwd", "whoami"],
+        answer: "pwd",
+        correctFeedback:
+          "Correct! pwd prints the current working directory.",
+        wrongFeedback:
+          "Not quite! Think about which command prints the working directory."
+      }
+    ],
+    completion:
+      "You learned how pwd, ls, and whoami help you understand a Linux terminal session."
+  }
+};
+
 export function initializeLessons() {
-  const startLessonButton = document.querySelector("#start-lesson");
+  const library = document.querySelector("#lesson-library");
+  const activeLessonPanel = document.querySelector("#active-lesson");
+  const activeLessonTitle = document.querySelector("#active-lesson-title");
+  const backToLessonsButton = document.querySelector("#back-to-lessons");
   const lessonContent = document.querySelector("#lesson-content");
   const lessonProgress = document.querySelector("#lesson-progress");
   const lessonProgressBar = document.querySelector("#lesson-progress-bar");
 
-  if (!startLessonButton || !lessonContent || !lessonProgress || !lessonProgressBar) {
+  if (
+    !library ||
+    !activeLessonPanel ||
+    !activeLessonTitle ||
+    !backToLessonsButton ||
+    !lessonContent ||
+    !lessonProgress ||
+    !lessonProgressBar
+  ) {
     return;
   }
+
+  let currentLesson = null;
 
   function createElement(tag, text) {
     const element = document.createElement(tag);
@@ -15,152 +121,107 @@ export function initializeLessons() {
     return element;
   }
 
-  function createButton(text, onClick) {
-    const button = document.createElement("button");
+  function createButton(text, onClick, secondary = false) {
+    const button = createElement("button", text);
     button.type = "button";
-    button.textContent = text;
+
+    if (secondary) {
+      button.className = "secondary-button";
+    }
+
     button.addEventListener("click", onClick);
     return button;
   }
 
-  function updateProgress(step) {
-    // Three learning steps, followed by a completion screen.
-    const completed = step === 4;
-
-    lessonProgress.textContent = completed
-      ? "Lesson complete — 3 of 3 steps finished"
-      : `Step ${step} of 3`;
-
-    lessonProgressBar.value = Math.min(step, 3);
-    lessonProgress.hidden = false;
-    lessonProgressBar.hidden = false;
+  function showLibrary() {
+    currentLesson = null;
+    activeLessonPanel.hidden = true;
+    library.hidden = false;
+    lessonContent.replaceChildren();
+    lessonContent.hidden = true;
   }
 
-  function showStep(step) {
-    updateProgress(step);
-
-    // STEP 1: Introduction
-    if (step === 1) {
-      const heading = createElement(
-        "h3",
-        "Step 1: Understanding Network Scanning"
-      );
-
-      const introduction = createElement(
-        "p",
-        "Network scanning identifies open ports and services on an authorized " +
-        "computer or network. It helps you understand what a system exposes."
-      );
-
-      const explanation = createElement(
-        "p",
-        "A port is a numbered communication endpoint. Port 22 is commonly " +
-        "used for SSH, and port 80 is commonly used for HTTP."
-      );
-
-      const reminder = createElement(
-        "p",
-        "Only scan systems you own or have explicit permission to test."
-      );
-
-      const nextButton = createButton(
-        "Next Step",
-        () => showStep(2)
-      );
-
-      lessonContent.replaceChildren(
-        heading,
-        introduction,
-        explanation,
-        reminder,
-        nextButton
-      );
+  function showStep(index) {
+    if (!currentLesson) {
+      return;
     }
 
-    // STEP 2: Guided practice
-    else if (step === 2) {
-      const heading = createElement(
-        "h3",
-        "Step 2: Understanding Scan Results"
-      );
+    const total = currentLesson.steps.length;
+    const finished = index === total;
 
-      const instructions = createElement(
+    lessonProgress.textContent = finished
+      ? `Lesson complete — ${total} of ${total} steps finished`
+      : `Step ${index + 1} of ${total}`;
+
+    lessonProgressBar.max = total;
+    lessonProgressBar.value = finished ? total : index + 1;
+
+    lessonProgress.hidden = false;
+    lessonProgressBar.hidden = false;
+
+    // Lesson completion screen
+    if (finished) {
+      const heading = createElement("h3", "Lesson Complete!");
+
+      const message = createElement(
         "p",
-        "Examine these simulated results from an authorized network scan. " +
-        "No real scan is performed in this lesson."
+        `Congratulations! You completed ${currentLesson.title}.`
       );
 
-      const scanResults = createElement(
-        "pre",
-        "PORT     STATE    SERVICE\n" +
-        "22/tcp   open     ssh\n" +
-        "80/tcp   closed   http"
-      );
-
-      const explanation = createElement(
+      const summary = createElement(
         "p",
-        "Port 22 is open, indicating an accessible SSH service from the " +
-        "scanner's perspective. Port 80 is closed, indicating that no " +
-        "service accepted the scan's connection attempts on that port."
+        currentLesson.completion
       );
 
       const reminder = createElement(
         "p",
-        "An open port does not automatically mean a system is vulnerable."
+        "Continue practicing only in an authorized lab environment."
       );
 
       const controls = document.createElement("div");
       controls.className = "proposal-controls";
 
-      const backButton = createButton(
-        "Back",
-        () => showStep(1)
+      controls.append(
+        createButton("Restart Lesson", () => showStep(0)),
+        createButton("Choose Another Lesson", showLibrary, true)
       );
-      backButton.className = "secondary-button";
-
-      const nextButton = createButton(
-        "Next Step",
-        () => showStep(3)
-      );
-
-      controls.append(backButton, nextButton);
 
       lessonContent.replaceChildren(
         heading,
-        instructions,
-        scanResults,
-        explanation,
+        message,
+        summary,
         reminder,
         controls
       );
+
+      lessonContent.hidden = false;
+      return;
     }
 
-    // STEP 3: Knowledge check
-    else if (step === 3) {
-      const heading = createElement(
-        "h3",
-        "Step 3: Knowledge Check"
-      );
+    const step = currentLesson.steps[index];
 
-      const instructions = createElement(
-        "p",
-        "Based on the previous scan results, which TCP port was open?"
-      );
+    const heading = createElement(
+      "h3",
+      `Step ${index + 1}: ${step.title}`
+    );
 
-      const quizForm = document.createElement("form");
+    const content = [heading];
+
+    // Quiz step
+    if (step.question) {
+      const question = createElement("p", step.question);
+
+      const form = document.createElement("form");
       const fieldset = document.createElement("fieldset");
 
       fieldset.append(
         createElement("legend", "Select one answer:")
       );
 
-      const choices = ["22/tcp", "80/tcp", "443/tcp"];
-
-      for (const choice of choices) {
+      for (const choice of step.choices) {
         const label = document.createElement("label");
-        label.style.display = "block";
-
         const input = document.createElement("input");
+
         input.type = "radio";
         input.name = "lesson-answer";
         input.value = choice;
@@ -176,42 +237,47 @@ export function initializeLessons() {
       const feedback = createElement("p", "");
       feedback.setAttribute("role", "status");
 
-      const checkButton = document.createElement("button");
-      checkButton.type = "submit";
-      checkButton.textContent = "Check Answer";
+      const buttons = document.createElement("div");
+      buttons.className = "proposal-controls";
 
-      const backButton = createButton(
-        "Back",
-        () => showStep(2)
+      buttons.append(
+        createButton("Back", () => showStep(index - 1), true)
       );
-      backButton.className = "secondary-button";
+
+      const checkButton = createElement(
+        "button",
+        "Check Answer"
+      );
+
+      checkButton.type = "submit";
+      buttons.append(checkButton);
 
       const completeButton = createButton(
         "Complete Lesson",
         () => {
-          const selected = quizForm.querySelector(
+          const selected = form.querySelector(
             'input[name="lesson-answer"]:checked'
           );
 
-          if (selected?.value === "22/tcp") {
-            showStep(4);
+          if (selected?.value === step.answer) {
+            showStep(total);
           }
         }
       );
 
       completeButton.hidden = true;
 
-      // Reset feedback when the student changes an answer.
+      // Reset feedback if the student changes answers.
       fieldset.addEventListener("change", () => {
         feedback.textContent = "";
         feedback.dataset.state = "";
         completeButton.hidden = true;
       });
 
-      quizForm.addEventListener("submit", (event) => {
+      form.addEventListener("submit", (event) => {
         event.preventDefault();
 
-        const selected = quizForm.querySelector(
+        const selected = form.querySelector(
           'input[name="lesson-answer"]:checked'
         );
 
@@ -219,83 +285,89 @@ export function initializeLessons() {
           feedback.textContent = "Please select an answer.";
           feedback.dataset.state = "error";
           completeButton.hidden = true;
-        } else if (selected.value === "22/tcp") {
-          feedback.textContent =
-            "Correct! Port 22 was open and associated with SSH.";
+        } else if (selected.value === step.answer) {
+          feedback.textContent = step.correctFeedback;
           feedback.dataset.state = "healthy";
           completeButton.hidden = false;
         } else {
-          feedback.textContent =
-            "Not quite! Review the scan results and try again.";
+          feedback.textContent = step.wrongFeedback;
           feedback.dataset.state = "error";
           completeButton.hidden = true;
         }
       });
 
-      const controls = document.createElement("div");
-      controls.className = "proposal-controls";
-
-      controls.append(backButton, checkButton);
-
-      quizForm.append(
+      form.append(
         fieldset,
-        controls,
+        buttons,
         feedback,
         completeButton
       );
 
-      lessonContent.replaceChildren(
-        heading,
-        instructions,
-        quizForm
-      );
+      content.push(question, form);
     }
 
-    // STEP 4: Lesson completion
-    else if (step === 4) {
-      const heading = createElement(
-        "h3",
-        "Lesson Complete!"
+    // Educational explanation and simulated examples
+    else {
+      for (const paragraph of step.paragraphs || []) {
+        content.push(createElement("p", paragraph));
+      }
+
+      if (step.example) {
+        content.push(createElement("pre", step.example));
+      }
+
+      for (const paragraph of step.afterExample || []) {
+        content.push(createElement("p", paragraph));
+      }
+
+      const buttons = document.createElement("div");
+      buttons.className = "proposal-controls";
+
+      if (index > 0) {
+        buttons.append(
+          createButton("Back", () => showStep(index - 1), true)
+        );
+      }
+
+      buttons.append(
+        createButton("Next Step", () => showStep(index + 1))
       );
 
-      const congratulations = createElement(
-        "p",
-        "Congratulations! You completed Introduction to Network Scanning."
-      );
-
-      const summary = createElement(
-        "p",
-        "You learned about ports, services, and interpreting basic " +
-        "network scan results."
-      );
-
-      const nextSteps = createElement(
-        "p",
-        "Continue practicing only in an authorized lab environment."
-      );
-
-      const restartButton = createButton(
-        "Restart Lesson",
-        () => showStep(1)
-      );
-
-      lessonContent.replaceChildren(
-        heading,
-        congratulations,
-        summary,
-        nextSteps,
-        restartButton
-      );
+      content.push(buttons);
     }
 
+    lessonContent.replaceChildren(...content);
     lessonContent.hidden = false;
   }
 
-  // Start the lesson
-  startLessonButton.addEventListener("click", () => {
-    startLessonButton.textContent = "Lesson Started";
-    startLessonButton.disabled = true;
+  function startLesson(id) {
+    const selectedLesson = LESSONS[id];
 
-    showStep(1);
-  });
+    if (!selectedLesson) {
+      return;
+    }
+
+    currentLesson = selectedLesson;
+
+    library.hidden = true;
+    activeLessonPanel.hidden = false;
+    activeLessonTitle.textContent = selectedLesson.title;
+
+    showStep(0);
+  }
+
+  // Connect both Start Lesson buttons.
+  library.querySelectorAll("button[data-lesson-id]").forEach(
+    (button) => {
+      button.addEventListener("click", () => {
+        startLesson(button.dataset.lessonId);
+      });
+    }
+  );
+
+  // Return to the lesson selection screen.
+  backToLessonsButton.addEventListener(
+    "click",
+    showLibrary
+  );
 }
