@@ -1,6 +1,6 @@
 import { RedPathApi, normalizeExplanation, normalizeFinding, normalizeHealth } from "./api.js";
 import { normalizeRecommendation, ProposalWorkflow, recommendationRequestDisabled, renderProposalState, renderRecommendation } from "./recommendation.js";
-import { SetupController, formatDownloadSize, normalizeDiagnostics } from "./setup.js";
+import { SetupController, formatDownloadSize, normalizeDiagnostics, normalizeSetup, serviceHealthFromSetup } from "./setup.js";
 import {
   EmergencyStopWorkflow,
   normalizeAuditHistory,
@@ -208,7 +208,12 @@ async function refreshHealth() {
   message.dataset.state = "";
   message.textContent = "Checking RedPath services…";
   try {
-    const health = normalizeHealth(await api.getHealth());
+    // If the setup checks are unavailable, Ollama and Kali stay "Not reported".
+    const [rawHealth, setup] = await Promise.all([
+      api.getHealth(),
+      api.getSetup().then(normalizeSetup).catch(() => null),
+    ]);
+    const health = { ...normalizeHealth(rawHealth), ...(setup && serviceHealthFromSetup(setup)) };
     Object.entries(health).forEach(([name, value]) => renderService(name, value));
     const states = Object.values(health).map(({ state }) => state);
     const allHealthy = states.every((state) => state === "healthy");
