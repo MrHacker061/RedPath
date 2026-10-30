@@ -5,7 +5,8 @@ from threading import Event, Thread
 
 import pytest
 
-from redpath_ai.providers import OllamaProvider
+from redpath_ai.providers import HEALTH_TIMEOUT_SECONDS, OllamaProvider
+from redpath_setup.ollama import MODEL_PULL_TIMEOUT_SECONDS
 from redpath_setup.manifest import OLLAMA_ARTIFACT
 
 
@@ -33,7 +34,7 @@ def tags_provider(models):
 
 
 def installed_provider() -> OllamaProvider:
-    return tags_provider([{"name": "qwen3.5:9b"}])[0]
+    return tags_provider([{"name": "hf.co/IamLucif3r/Qwen3-4B-Instruct-2507-Abliterated:Q4_K_M"}])[0]
 
 
 def unavailable_provider() -> OllamaProvider:
@@ -142,12 +143,13 @@ def test_model_pull_uses_exact_model_name_and_confirms_loopback_tags(tmp_path):
     from redpath_setup.ollama import OllamaSetup
 
     runner = RecordingRunner()
-    provider, health_calls = tags_provider([{"name": "qwen3.5:9b"}])
+    provider, health_calls = tags_provider([{"name": "hf.co/IamLucif3r/Qwen3-4B-Instruct-2507-Abliterated:Q4_K_M"}])
     stage = OllamaSetup(tmp_path, runner=runner, provider=provider).pull_model(True, lambda *_: None, Event())
-    assert runner.calls == [["ollama", "pull", "qwen3.5:9b"]]
-    assert runner.timeouts == [600]
+    assert runner.calls == [["ollama", "pull", "hf.co/IamLucif3r/Qwen3-4B-Instruct-2507-Abliterated:Q4_K_M"]]
+    # The download has its own 60 minute limit, separate from the installer's 10.
+    assert runner.timeouts == [MODEL_PULL_TIMEOUT_SECONDS] == [3600]
     assert stage.status == "ready"
-    assert health_calls == [("http://127.0.0.1:11434/api/tags", None, 20.0)]
+    assert health_calls == [("http://127.0.0.1:11434/api/tags", None, HEALTH_TIMEOUT_SECONDS)]
 
 
 def test_successful_model_pull_reports_missing_model_when_tags_omits_it(tmp_path):
@@ -156,7 +158,7 @@ def test_successful_model_pull_reports_missing_model_when_tags_omits_it(tmp_path
     provider, health_calls = tags_provider([])
     stage = OllamaSetup(tmp_path, runner=RecordingRunner(), provider=provider).pull_model(True, lambda *_: None, Event())
     assert (stage.status, stage.code) == ("needs_attention", "MODEL_MISSING")
-    assert health_calls == [("http://127.0.0.1:11434/api/tags", None, 20.0)]
+    assert health_calls == [("http://127.0.0.1:11434/api/tags", None, HEALTH_TIMEOUT_SECONDS)]
 
 
 def test_cancellable_runner_terminates_active_child_and_reports_only_numeric_progress(tmp_path, monkeypatch):

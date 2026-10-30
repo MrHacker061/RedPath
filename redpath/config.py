@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from redpath.runtime import AppPaths
 from redpath_ai.models import DEFAULT_MODEL, selected_model
+from redpath_ai.providers import DOCKER_HOST_OLLAMA_URL, LOOPBACK_OLLAMA_URL
 
 
 def _default_database_url() -> str:
@@ -23,6 +24,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     # Which local AI model to use: REDPATH_MODEL in .env. Choices are in redpath_ai/models.py.
     model: str = DEFAULT_MODEL
+    # Where Ollama is: REDPATH_OLLAMA_URL. Leave it unset for the native app.
+    # Only docker-compose.yml sets it, to the Docker host address, which the
+    # provider accepts only when a container marker exists (redpath_ai/providers.py).
+    ollama_url: str = LOOPBACK_OLLAMA_URL
 
     @field_validator("host")
     @classmethod
@@ -35,6 +40,17 @@ class Settings(BaseSettings):
     @classmethod
     def require_known_model(cls, value: str) -> str:
         selected_model(value)  # raises with the list of valid choices
+        return value
+
+    @field_validator("ollama_url")
+    @classmethod
+    def require_known_ollama_url(cls, value: str) -> str:
+        # Catches typos at startup. The provider still makes the final
+        # container check, so this list alone does not allow the Docker address.
+        if value not in (LOOPBACK_OLLAMA_URL, DOCKER_HOST_OLLAMA_URL):
+            raise ValueError(
+                f"REDPATH_OLLAMA_URL must be {LOOPBACK_OLLAMA_URL} or {DOCKER_HOST_OLLAMA_URL}"
+            )
         return value
 
     @field_validator("database_url")

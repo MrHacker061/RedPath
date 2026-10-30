@@ -1,5 +1,18 @@
+// How long the dashboard waits for most requests before showing an error, so a
+// stuck backend never freezes the page. Normal requests answer in milliseconds.
 const DEFAULT_TIMEOUT_MS = 5000;
-export const SETUP_OPERATION_TIMEOUT_MS = 30 * 60_000;
+// Setup repairs (installing Ollama or Kali, enabling WSL, downloading the
+// model) take much longer. Must stay above the backend's model download limit
+// (MODEL_PULL_TIMEOUT_SECONDS, 60 minutes, in redpath_setup/ollama.py).
+export const SETUP_OPERATION_TIMEOUT_MS = 65 * 60_000;
+// AI recommendations wait for the local model, which took about 3 to 6 seconds
+// on an RTX 2060 once loaded, and up to about 30 seconds for the first answer
+// while the model loads. Must stay above the longest AI time limit any model
+// can have (60 seconds, the most OllamaProvider allows; the current limits are
+// timeout_seconds in redpath_ai/models.py), so the backend always answers
+// first: either with the AI answer or with its safe rule-based answer. With the old 5 second default,
+// the browser gave up before every AI answer, while the backend still saved it.
+export const RECOMMENDATION_TIMEOUT_MS = 75_000;
 const SETUP_COMPONENTS = new Set(["ollama", "model", "wsl", "kali"]);
 
 function setupComponent(component) {
@@ -60,7 +73,7 @@ export class RedPathApi {
   }
 
   async requestRecommendation(sessionId) {
-    return this.request(`/sessions/${encodeURIComponent(sessionId)}/recommendation`, { method: "POST" });
+    return this.request(`/sessions/${encodeURIComponent(sessionId)}/recommendation`, { method: "POST", timeoutMs: RECOMMENDATION_TIMEOUT_MS });
   }
 
   async approveProposal(sessionId, proposalId) {

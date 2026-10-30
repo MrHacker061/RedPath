@@ -11,8 +11,14 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
+from redpath.app import create_app
+from redpath.config import Settings
+from redpath_ai import providers
+from redpath_ai.models import MODELS, selected_model
 from redpath_ai.prompts import SYSTEM_PROMPT, recommendation_prompt
-from redpath_ai.providers import OllamaProvider, RuleBasedProvider
+from redpath_ai.providers import (
+    DOCKER_HOST_OLLAMA_URL, LOOPBACK_OLLAMA_URL, OllamaProvider, RuleBasedProvider, recommendation_schema,
+)
 from redpath_ai.schemas import (
     ActionDefinition,
     ActionArgumentConstraint,
@@ -128,7 +134,7 @@ def test_ollama_prompt_never_reaches_ambient_proxy_and_falls_back(variable):
     assert len(requests) == 1
     assert requests[0][:2] == ("127.0.0.1:11434", "http://127.0.0.1:11434/api/chat")
     assert b"private prompt marker" in requests[0][2]
-    assert requests[0][3] == 20.0
+    assert requests[0][3] == selected_model().timeout_seconds
 
 
 @pytest.mark.parametrize("status", [300, 301, 302, 303, 304, 307, 308, 399])
@@ -270,7 +276,7 @@ class OllamaTests(unittest.TestCase):
         self.assertEqual(provider.last_metrics.attempts, 1)
         self.assertEqual(provider.last_code, ProviderCode.OLLAMA_SUCCESS)
 
-    def test_malformed_output_retries_once_then_falls_back(self):
+    def test_malformed_output_falls_back_without_a_retry_by_default(self):
         calls = []
 
         def transport(url, body, timeout):
@@ -279,10 +285,23 @@ class OllamaTests(unittest.TestCase):
 
         provider = OllamaProvider(transport=transport)
         proposal = provider.recommend_next_step(context())
-        self.assertEqual(len(calls), 2)
+        # A retry would resend the same question and, at temperature 0, get the same answer.
+        self.assertEqual(len(calls), 1)
         self.assertEqual(proposal.action_name, "inspect_http_headers")
-        self.assertEqual(provider.last_metrics.attempts, 2)
+        self.assertEqual(provider.last_metrics.attempts, 1)
         self.assertEqual(provider.last_code, ProviderCode.OLLAMA_INVALID_OUTPUT_FALLBACK)
+
+    def test_malformed_output_retries_once_when_asked(self):
+        calls = []
+
+        def transport(url, body, timeout):
+            calls.append(url)
+            return {"message": {"content": "not json"}}
+
+        provider = OllamaProvider(transport=transport, invalid_output_retries=1)
+        provider.recommend_next_step(context())
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(provider.last_metrics.attempts, 2)
 
     def test_missing_structured_content_has_sanitized_invalid_code(self):
         def transport(url, body, timeout):
@@ -292,14 +311,20 @@ class OllamaTests(unittest.TestCase):
         provider.recommend_next_step(context())
         self.assertEqual(provider.last_code, ProviderCode.OLLAMA_INVALID_OUTPUT_FALLBACK)
 
-    def test_timeout_uses_fallback(self):
+    def test_timeout_uses_fallback_without_a_second_try(self):
+        calls = []
+
         def transport(url, body, timeout):
+            calls.append(url)
             raise TimeoutError
 
         provider = OllamaProvider(transport=transport)
         proposal = provider.recommend_next_step(context())
         self.assertEqual(proposal.action_name, "inspect_http_headers")
         self.assertEqual(provider.last_code, ProviderCode.OLLAMA_UNAVAILABLE_FALLBACK)
+        # Retrying a timeout would make the user wait the full limit twice.
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(provider.last_metrics.attempts, 1)
 
     def test_model_cannot_reference_unsupported_finding(self):
         def transport(url, body, timeout):
@@ -310,7 +335,7 @@ class OllamaTests(unittest.TestCase):
 
     def test_health_reports_installed_model(self):
         def transport(url, body, timeout):
-            return {"models": [{"name": "qwen3.5:9b"}]}
+            return {"models": [{"name": "hf.co/IamLucif3r/Qwen3-4B-Instruct-2507-Abliterated:Q4_K_M"}]}
 
         health = OllamaProvider(transport=transport).health()
         self.assertTrue(health.available)
@@ -318,6 +343,160 @@ class OllamaTests(unittest.TestCase):
     def test_non_loopback_endpoint_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "loopback"):
             OllamaProvider(base_url="http://192.168.1.2:11434")
+
+
+def test_ollama_must_fill_every_answer_field_including_finding_ids():
+    sent = []
+
+    def transport(url, body, timeout):
+        sent.append(body["format"])
+        return {"message": {"content": action_json()}}
+
+    OllamaProvider(transport=transport).recommend_next_step(context())
+    # Without this, models skipped finding_ids and every action answer was rejected.
+    every_field = set(ProposedStep.model_json_schema()["properties"])
+    assert all(set(shape["required"]) == every_field for shape in sent[0]["anyOf"])
+
+
+def test_answer_format_only_offers_values_from_this_session():
+    shapes = recommendation_schema(context())["anyOf"]
+    action, more_evidence = shapes
+    # One shape for the offered action, one for asking for more evidence.
+    assert action["properties"]["action_name"] == {"const": "inspect_http_headers"}
+    assert action["properties"]["finding_ids"]["items"] == {"enum": ["finding-12"]}
+    arguments = action["properties"]["arguments"]
+    assert arguments["properties"] == {"target_id": {"enum": ["target-3"]}, "port": {"enum": [80]}}
+    # The two mistakes seen in real answers: a port not in the scan, and a missing target_id.
+    assert set(arguments["required"]) == {"target_id", "port"}
+    assert arguments["additionalProperties"] is False
+    assert more_evidence["properties"]["action_name"] == {"type": "null"}
+    assert more_evidence["properties"]["arguments"]["properties"] == {}
+
+
+def test_answer_format_leaves_out_actions_whose_required_values_are_missing():
+    no_findings = context().model_copy(update={"findings": ()})
+    shapes = recommendation_schema(no_findings)["anyOf"]
+    # Actions must cite a finding, so only "more evidence" is possible.
+    assert [shape["properties"]["kind"] for shape in shapes] == [{"const": "more_evidence"}]
+    assert shapes[0]["properties"]["finding_ids"] == {"type": "array", "maxItems": 0}
+
+
+def test_answer_format_respects_argument_bounds_and_optional_arguments():
+    ctx = context().model_copy(update={"allowed_actions": (ActionDefinition(
+        name="check_tcp_connection",
+        description="Fixed TCP check.",
+        argument_constraints=(
+            ActionArgumentConstraint(name="target_id", kind=ArgumentKind.TARGET_ID),
+            ActionArgumentConstraint(name="port", kind=ArgumentKind.PORT, maximum=79),
+            ActionArgumentConstraint(name="timeout_seconds", kind=ArgumentKind.INTEGER, required=False, minimum=1, maximum=10),
+        ),
+    ),)})
+    # Port 80 is above this action's maximum, so the action cannot be offered at all.
+    assert [shape["properties"]["kind"] for shape in recommendation_schema(ctx)["anyOf"]] == [{"const": "more_evidence"}]
+    ctx = ctx.model_copy(update={"allowed_actions": (ctx.allowed_actions[0].model_copy(update={
+        "argument_constraints": (*ctx.allowed_actions[0].argument_constraints[:1],
+                                 ActionArgumentConstraint(name="port", kind=ArgumentKind.PORT),
+                                 ctx.allowed_actions[0].argument_constraints[2]),
+    }),)})
+    arguments = recommendation_schema(ctx)["anyOf"][0]["properties"]["arguments"]
+    assert arguments["properties"]["timeout_seconds"] == {"type": "integer", "minimum": 1, "maximum": 10}
+    assert "timeout_seconds" not in arguments["required"]
+
+
+def test_explanations_keep_their_optional_fields_optional():
+    sent = []
+
+    def transport(url, body, timeout):
+        sent.append(body["format"])
+        return {"message": {"content": "{}"}}
+
+    OllamaProvider(transport=transport).explain_result("result")
+    assert "terms" not in sent[0]["required"]
+
+
+def test_each_model_uses_its_own_time_limit(tmp_path, security_config):
+    for choice, model in MODELS.items():
+        app = create_app(
+            Settings(database_url=f"sqlite:///{tmp_path / f'{choice}.db'}", model=choice),
+            security=security_config,
+        )
+        assert app.state.llm_provider.timeout_seconds == model.timeout_seconds
+    # Every limit must fit the provider's allowed range.
+    assert all(0.1 <= model.timeout_seconds <= 60 for model in MODELS.values())
+
+
+def test_health_check_uses_a_short_time_limit():
+    timeouts = []
+
+    def transport(url, body, timeout):
+        timeouts.append(timeout)
+        return {"models": []}
+
+    OllamaProvider(timeout_seconds=60, transport=transport).health()
+    assert timeouts == [providers.HEALTH_TIMEOUT_SECONDS]
+
+
+def test_prompt_asks_for_supporting_finding_ids():
+    assert "list the IDs of the findings that support it in finding_ids" in recommendation_prompt(context())
+
+
+@pytest.fixture
+def container_marker(tmp_path, monkeypatch):
+    """Point CONTAINER_MARKERS at a temp file; tests create it to simulate a container."""
+    marker = tmp_path / ".dockerenv"
+    monkeypatch.setattr(providers, "CONTAINER_MARKERS", (marker,))
+    return marker
+
+
+def test_docker_host_address_is_allowed_inside_a_container(container_marker):
+    container_marker.touch()
+    assert OllamaProvider(base_url=DOCKER_HOST_OLLAMA_URL).base_url == DOCKER_HOST_OLLAMA_URL
+
+
+def test_docker_host_address_is_refused_outside_a_container(container_marker):
+    # On Windows, Docker Desktop maps this name to the network address.
+    with pytest.raises(ValueError, match="loopback"):
+        OllamaProvider(base_url=DOCKER_HOST_OLLAMA_URL)
+
+
+@pytest.mark.parametrize("url", [
+    "http://host.docker.internal:11435",
+    "https://host.docker.internal:11434",
+    "http://host.docker.internal.example.com:11434",
+    "http://host.docker.internal:11434@example.com",
+    "http://gateway.docker.internal:11434",
+    "http://localhost:11434",
+])
+def test_only_the_exact_docker_host_address_is_allowed_inside_a_container(container_marker, url):
+    container_marker.touch()
+    with pytest.raises(ValueError, match="loopback"):
+        OllamaProvider(base_url=url)
+
+
+def test_ollama_url_setting_defaults_to_loopback_and_rejects_other_addresses():
+    assert Settings().ollama_url == LOOPBACK_OLLAMA_URL
+    assert Settings(ollama_url=DOCKER_HOST_OLLAMA_URL).ollama_url == DOCKER_HOST_OLLAMA_URL
+    with pytest.raises(ValidationError, match="REDPATH_OLLAMA_URL"):
+        Settings(ollama_url="http://192.168.1.2:11434")
+
+
+def test_app_sends_ai_requests_to_the_configured_ollama_url(tmp_path, security_config, container_marker):
+    container_marker.touch()
+    app = create_app(
+        Settings(database_url=f"sqlite:///{tmp_path / 'docker.db'}", ollama_url=DOCKER_HOST_OLLAMA_URL),
+        security=security_config,
+    )
+    # The setup screen and status cards share this provider, so they follow it too.
+    assert app.state.llm_provider.base_url == DOCKER_HOST_OLLAMA_URL
+    assert app.state.ollama_setup.provider is app.state.llm_provider
+
+
+def test_native_app_refuses_the_docker_host_address_at_startup(tmp_path, security_config, container_marker):
+    with pytest.raises(ValueError, match="loopback"):
+        create_app(
+            Settings(database_url=f"sqlite:///{tmp_path / 'native.db'}", ollama_url=DOCKER_HOST_OLLAMA_URL),
+            security=security_config,
+        )
 
 
 if __name__ == "__main__":
