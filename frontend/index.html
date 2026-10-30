@@ -20,6 +20,7 @@
   <nav aria-label="Primary navigation">
     <a href="#setup">Setup</a>
     <a href="#dashboard" aria-current="page">Dashboard</a>
+    <a href="#lessons">Lessons</a>
     <a href="#lab">Lab</a>
     <a href="#approval">Approval</a>
     <a href="#results">Results</a>
@@ -72,6 +73,34 @@
           <p class="detail" data-detail>Waiting for a response.</p>
         </article>
       </div>
+    </section>
+
+    <section id="lessons" aria-labelledby="lessons-title">
+      <p class="eyebrow">GUIDED LEARNING</p>
+      <h2 id="lessons-title">RedPath Lessons</h2>
+
+      <p>
+        Learn cybersecurity concepts through guided lessons
+        before practicing in an authorized lab.
+      </p>
+
+      <article>
+        <h3>Lesson 1: Introduction to Network Scanning</h3>
+
+        <p>
+          Learn about network ports, common services,
+          and how to interpret basic scan results.
+        </p>
+
+        <p class="detail">Beginner | Demo Lesson</p>
+        
+        <button id="start-lesson" type="button">
+          Start Lesson
+        </button>
+
+        <div id="lesson-content" hidden aria-live="polite"></div>
+
+      </article>
     </section>
 
     <section id="lab" aria-labelledby="session-title">

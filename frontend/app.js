@@ -1,4 +1,5 @@
 import { RedPathApi, normalizeExplanation, normalizeFinding, normalizeHealth } from "./api.js";
+import { initializeLessons } from "./lessons.js";
 import { normalizeRecommendation, ProposalWorkflow, recommendationRequestDisabled, renderProposalState, renderRecommendation } from "./recommendation.js";
 import { SetupController, formatDownloadSize, normalizeDiagnostics } from "./setup.js";
 import {
@@ -388,3 +389,4 @@ proposalElements.reject.addEventListener("click", () => proposalWorkflow.decide(
 refreshHealth();
 emergencyStopWorkflow.refresh();
 setupController.refresh();
+initializeLessons();
