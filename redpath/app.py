@@ -104,6 +104,8 @@ def create_app(
             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
         })
 
+    # Must answer instantly for the desktop startup check, so Ollama and Kali are
+    # not contacted here. The dashboard reads their status from /api/v1/setup.
     @app.get("/api/v1/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         try:

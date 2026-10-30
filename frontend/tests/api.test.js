@@ -92,6 +92,12 @@ test("Worker 1 foundation health response maps API and leaves unreported service
   assert.equal(health.kali.state, "unknown");
 });
 
+test("services the backend reports as unknown show as not reported, not as a problem", () => {
+  const health = normalizeHealth({ services: { fastapi: "healthy", ollama: "unknown", kali: { status: "unknown" } } });
+  assert.equal(health.ollama.state, "unknown");
+  assert.equal(health.kali.state, "unknown");
+});
+
 test("degraded Worker 1 health response reports an API problem", () => {
   const health = normalizeHealth({ status: "degraded", service: "redpath-api", version: "0.1.0", database: "unavailable" });
   assert.equal(health.fastapi.state, "error");
