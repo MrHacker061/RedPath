@@ -2,17 +2,19 @@
 export function initializeLessons() {
   const startLessonButton = document.querySelector("#start-lesson");
   const lessonContent = document.querySelector("#lesson-content");
+  const lessonProgress = document.querySelector("#lesson-progress");
+  const lessonProgressBar = document.querySelector("#lesson-progress-bar");
 
-  if (!startLessonButton || !lessonContent) return;
+  if (!startLessonButton || !lessonContent || !lessonProgress || !lessonProgressBar) {
+    return;
+  }
 
-  // Helper function for creating HTML elements
   function createElement(tag, text) {
     const element = document.createElement(tag);
     element.textContent = text;
     return element;
   }
 
-  // Helper function for creating buttons
   function createButton(text, onClick) {
     const button = document.createElement("button");
     button.type = "button";
@@ -21,8 +23,21 @@ export function initializeLessons() {
     return button;
   }
 
-  // Display the requested lesson step
+  function updateProgress(step) {
+    // Three learning steps, followed by a completion screen.
+    const completed = step === 4;
+
+    lessonProgress.textContent = completed
+      ? "Lesson complete — 3 of 3 steps finished"
+      : `Step ${step} of 3`;
+
+    lessonProgressBar.value = Math.min(step, 3);
+    lessonProgress.hidden = false;
+    lessonProgressBar.hidden = false;
+  }
+
   function showStep(step) {
+    updateProgress(step);
 
     // STEP 1: Introduction
     if (step === 1) {
@@ -33,23 +48,19 @@ export function initializeLessons() {
 
       const introduction = createElement(
         "p",
-        "Network scanning is a technique used to identify " +
-        "open ports and available services on a computer " +
-        "or network. It helps cybersecurity professionals " +
-        "understand what services a system exposes."
+        "Network scanning identifies open ports and services on an authorized " +
+        "computer or network. It helps you understand what a system exposes."
       );
 
       const explanation = createElement(
         "p",
-        "A port is a numbered communication endpoint. " +
-        "For example, port 22 is commonly used for SSH, " +
-        "while port 80 is commonly used for HTTP."
+        "A port is a numbered communication endpoint. Port 22 is commonly " +
+        "used for SSH, and port 80 is commonly used for HTTP."
       );
 
       const reminder = createElement(
         "p",
-        "Important: Only scan systems you own or have " +
-        "explicit permission to test."
+        "Only scan systems you own or have explicit permission to test."
       );
 
       const nextButton = createButton(
@@ -75,8 +86,8 @@ export function initializeLessons() {
 
       const instructions = createElement(
         "p",
-        "Imagine you performed an authorized network scan. " +
-        "Examine the following simulated results:"
+        "Examine these simulated results from an authorized network scan. " +
+        "No real scan is performed in this lesson."
       );
 
       const scanResults = createElement(
@@ -88,17 +99,18 @@ export function initializeLessons() {
 
       const explanation = createElement(
         "p",
-        "Port 22 is open, indicating that the scan found " +
-        "an accessible SSH service. Port 80 is closed, " +
-        "meaning no service is accepting connections " +
-        "on that port from the scanned perspective."
+        "Port 22 is open, indicating an accessible SSH service from the " +
+        "scanner's perspective. Port 80 is closed, indicating that no " +
+        "service accepted the scan's connection attempts on that port."
       );
 
       const reminder = createElement(
         "p",
-        "Remember: An open port does not automatically " +
-        "mean that a system is vulnerable."
+        "An open port does not automatically mean a system is vulnerable."
       );
+
+      const controls = document.createElement("div");
+      controls.className = "proposal-controls";
 
       const backButton = createButton(
         "Back",
@@ -111,8 +123,6 @@ export function initializeLessons() {
         () => showStep(3)
       );
 
-      const controls = createElement("div", "");
-      controls.className = "proposal-controls";
       controls.append(backButton, nextButton);
 
       lessonContent.replaceChildren(
@@ -134,21 +144,19 @@ export function initializeLessons() {
 
       const instructions = createElement(
         "p",
-        "Based on the previous scan results, " +
-        "which TCP port was open?"
+        "Based on the previous scan results, which TCP port was open?"
       );
 
       const quizForm = document.createElement("form");
+      const fieldset = document.createElement("fieldset");
+
+      fieldset.append(
+        createElement("legend", "Select one answer:")
+      );
+
       const choices = ["22/tcp", "80/tcp", "443/tcp"];
 
-      const fieldset = document.createElement("fieldset");
-      const legend = createElement(
-        "legend",
-        "Select one answer:"
-      );
-      fieldset.append(legend);
-
-      choices.forEach((choice) => {
+      for (const choice of choices) {
         const label = document.createElement("label");
         label.style.display = "block";
 
@@ -159,11 +167,11 @@ export function initializeLessons() {
 
         label.append(
           input,
-          document.createTextNode(" " + choice)
+          document.createTextNode(` ${choice}`)
         );
 
         fieldset.append(label);
-      });
+      }
 
       const feedback = createElement("p", "");
       feedback.setAttribute("role", "status");
@@ -180,9 +188,25 @@ export function initializeLessons() {
 
       const completeButton = createButton(
         "Complete Lesson",
-        () => showStep(4)
+        () => {
+          const selected = quizForm.querySelector(
+            'input[name="lesson-answer"]:checked'
+          );
+
+          if (selected?.value === "22/tcp") {
+            showStep(4);
+          }
+        }
       );
+
       completeButton.hidden = true;
+
+      // Reset feedback when the student changes an answer.
+      fieldset.addEventListener("change", () => {
+        feedback.textContent = "";
+        feedback.dataset.state = "";
+        completeButton.hidden = true;
+      });
 
       quizForm.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -194,12 +218,10 @@ export function initializeLessons() {
         if (!selected) {
           feedback.textContent = "Please select an answer.";
           feedback.dataset.state = "error";
-          return;
-        }
-
-        if (selected.value === "22/tcp") {
+          completeButton.hidden = true;
+        } else if (selected.value === "22/tcp") {
           feedback.textContent =
-            "Correct! Port 22 was open and running SSH.";
+            "Correct! Port 22 was open and associated with SSH.";
           feedback.dataset.state = "healthy";
           completeButton.hidden = false;
         } else {
@@ -210,8 +232,9 @@ export function initializeLessons() {
         }
       });
 
-      const controls = createElement("div", "");
+      const controls = document.createElement("div");
       controls.className = "proposal-controls";
+
       controls.append(backButton, checkButton);
 
       quizForm.append(
@@ -237,20 +260,18 @@ export function initializeLessons() {
 
       const congratulations = createElement(
         "p",
-        "Congratulations! You completed the Introduction " +
-        "to Network Scanning lesson."
+        "Congratulations! You completed Introduction to Network Scanning."
       );
 
       const summary = createElement(
         "p",
-        "You learned about network ports, common services, " +
-        "and how to interpret basic network scan results."
+        "You learned about ports, services, and interpreting basic " +
+        "network scan results."
       );
 
       const nextSteps = createElement(
         "p",
-        "You are now ready to continue learning about " +
-        "network security in an authorized lab environment."
+        "Continue practicing only in an authorized lab environment."
       );
 
       const restartButton = createButton(
@@ -270,7 +291,7 @@ export function initializeLessons() {
     lessonContent.hidden = false;
   }
 
-  // Start the lesson when the student clicks the button
+  // Start the lesson
   startLessonButton.addEventListener("click", () => {
     startLessonButton.textContent = "Lesson Started";
     startLessonButton.disabled = true;
