@@ -194,7 +194,7 @@ export function normalizeHealth(payload) {
     const state = ["healthy", "online", "ready", "running", "ok"].includes(rawState) ? "healthy"
       : name === "kali" && ["poweroff", "not_created", "stopped"].includes(rawState) ? "standby"
       : ["stopped", "offline", "unavailable"].includes(rawState) ? "offline"
-      : rawState === undefined ? "unknown"
+      : rawState === undefined || rawState === "unknown" ? "unknown"
       : "error";
 
     // Never render backend-provided detail. Tool output and error details are
