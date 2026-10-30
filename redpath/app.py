@@ -65,7 +65,12 @@ def create_app(
     app.state.paths = app_paths
     app.state.engine = engine
     app.state.session_factory = session_factory
-    app.state.llm_provider = OllamaProvider(model=selected_model(config.model).tag)
+    # The REDPATH_MODEL choice sets both the model and how long to wait for its
+    # answers (timeout_seconds in redpath_ai/models.py).
+    model = selected_model(config.model)
+    app.state.llm_provider = OllamaProvider(
+        model=model.tag, base_url=config.ollama_url, timeout_seconds=model.timeout_seconds,
+    )
     app.state.execution_fence = ExecutionFence()
     app.state.ollama_setup = OllamaSetup(app_paths.download_dir, provider=app.state.llm_provider)
     app.state.wsl_setup = WslSetup(app_paths.wsl_dir)

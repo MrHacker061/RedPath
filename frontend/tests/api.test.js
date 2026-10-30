@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ApiError, RedPathApi as ApiClient, SETUP_OPERATION_TIMEOUT_MS, normalizeExplanation, normalizeFinding, normalizeHealth } from "../api.js";
+import { ApiError, RedPathApi as ApiClient, RECOMMENDATION_TIMEOUT_MS, SETUP_OPERATION_TIMEOUT_MS, normalizeExplanation, normalizeFinding, normalizeHealth } from "../api.js";
 
 // Route tests inject a session token; bootstrap tests use the production client.
 class RedPathApi extends ApiClient {
@@ -149,6 +149,19 @@ test("recommendation request posts to the encoded session endpoint", async () =>
   assert.equal(request.url, "/api/v1/sessions/session%20%2F1/recommendation");
   assert.equal(request.options.method, "POST");
   assert.equal(request.options.body, undefined);
+});
+
+test("recommendation request waits longer than the backend's longest AI time limit", async () => {
+  let delay;
+  const api = new RedPathApi({
+    setTimeoutImpl: (_callback, ms) => { delay = ms; return 1; },
+    clearTimeoutImpl: () => {},
+    fetchImpl: async () => jsonResponse({ proposal: {}, policy_decision: {} }),
+  });
+  await api.requestRecommendation("session-1");
+  // A model's time limit may be up to 60 seconds; 5 seconds always gave up first.
+  assert.equal(delay, RECOMMENDATION_TIMEOUT_MS);
+  assert.ok(RECOMMENDATION_TIMEOUT_MS > 60_000);
 });
 
 test("proposal decisions post the exact encoded proposal path", async () => {

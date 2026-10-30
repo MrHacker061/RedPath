@@ -61,14 +61,15 @@ def future(hours=2):
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
 
 
-def seed_finding(client, app, *, address="192.168.56.20", service="http", port=80):
+def seed_finding(client, app, *, address="192.168.56.20", service="http", port=80, lesson_title=None):
     session = client.post(
         "/api/v1/sessions",
         json={"authorization_confirmed": True, "expires_at": future()},
     ).json()
     client.post(
         f"/api/v1/sessions/{session['id']}/lesson-source",
-        json={"url": "https://tryhackme.com/room/must-not-enter-model-context"},
+        json={"url": "https://tryhackme.com/room/must-not-enter-model-context",
+              **({"title": lesson_title} if lesson_title else {})},
     )
     target_response = client.post(
         f"/api/v1/sessions/{session['id']}/target",
@@ -277,3 +278,25 @@ def test_recommendation_metadata_covers_exact_backend_action_registry():
     assert {action.name for action in RECOMMENDATION_ACTIONS} == set(
         ACTION_ARGUMENT_MODELS
     )
+
+
+def test_recommendation_sends_the_lesson_title_but_never_the_lesson_url(client, app):
+    session, _, _ = seed_finding(client, app, lesson_title="Learn how HTTP headers identify a web server.")
+    provider = StubProvider(lambda context: valid_step(context))
+    app.state.llm_provider = provider
+
+    assert client.post(f"/api/v1/sessions/{session['id']}/recommendation").status_code == 201
+    # The title tells the model what the user is studying.
+    assert provider.context.lesson_objective == "Learn how HTTP headers identify a web server."
+    # The lesson link and the target address still never reach the model.
+    assert "tryhackme" not in provider.context.model_dump_json()
+    assert "192.168.56.20" not in provider.context.model_dump_json()
+
+
+def test_recommendation_uses_the_general_goal_without_a_lesson_title(client, app):
+    session, _, _ = seed_finding(client, app)
+    provider = StubProvider(lambda context: valid_step(context))
+    app.state.llm_provider = provider
+
+    assert client.post(f"/api/v1/sessions/{session['id']}/recommendation").status_code == 201
+    assert provider.context.lesson_objective == "Choose a safe, evidence-supported next learning action."
