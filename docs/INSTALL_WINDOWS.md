@@ -17,7 +17,8 @@ Setup discloses these download sizes before repair consent:
 | Component | Version or model | Exact disclosed bytes | Displayed size |
 | --- | --- | --- | --- |
 | Ollama installer | 0.34.0 | 1,574,272,976 | 1.47 GiB |
-| Local model | `qwen2.5:7b-instruct-q4_K_M` | 4,683,087,332 | 4.36 GiB |
+| Local model (default, `REDPATH_MODEL=qwen3`) | `hf.co/IamLucif3r/Qwen3-4B-Instruct-2507-Abliterated:Q4_K_M` | 2,497,292,749 | 2.33 GiB |
+| Local model (`REDPATH_MODEL=qwen2.5-coder`) | `hf.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF:Q3_K_M` | 3,808,404,646 | 3.55 GiB |
 | Managed Kali image | 2026.2 | 247,857,686 | 236.38 MiB |
 | WSL2 | Managed by Windows | Unknown (`null` in the API) | No size shown |
 
@@ -64,12 +65,13 @@ not display artifact checksums or provide a separate Retry or View Details
 control. On a host where WSL status probes time out, a refresh can take over a
 minute; wait for the returned component status before attempting repair.
 
-RedPath uses local Ollama by default at `http://127.0.0.1:11434` with
-`qwen2.5:7b-instruct-q4_K_M`. Its private HTTP transport disables ambient and
-system proxies and rejects every redirect, including redirects to loopback.
-It validates model output against the allowed actions and falls back to
-deterministic local recommendations if Ollama is unavailable, returns a
-redirect, or its output remains invalid after bounded attempts. The corrected
+RedPath uses local Ollama by default at `http://127.0.0.1:11434` with the
+model chosen by `REDPATH_MODEL` (see `docs/OLLAMA_SETUP.md`). Its private HTTP
+transport disables ambient and system proxies and rejects every redirect,
+including redirects to loopback. It validates model output against the
+allowed actions and falls back to deterministic local recommendations if
+Ollama is unavailable or times out, returns a redirect, or its output is
+invalid. The corrected
 unsigned candidate is bound to transport-fix commit
 `c828f078b1315d8ed0c20fa619a04872e953bb2c` in the release checklist. A successful
 recommendation therefore does not prove the model was available.

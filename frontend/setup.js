@@ -25,6 +25,21 @@ export function normalizeSetup(payload) {
   return { components: Object.fromEntries(COMPONENTS.map((name) => [name, componentStatus(payload.components[name])])) };
 }
 
+// The health route only proves the API is up, because the desktop startup check
+// needs an instant answer. The Ollama and Kali status cards use these setup
+// checks instead, which really contact Ollama and WSL.
+export function serviceHealthFromSetup({ components }) {
+  const { ollama, model, kali } = components;
+  return {
+    ollama: ollama.status !== "ready" ? { state: "offline", detail: "Ollama is not running or cannot be reached." }
+      : model.status === "ready" ? { state: "healthy", detail: "Ollama and the selected model are available." }
+      : { state: "error", detail: "Ollama is running, but the selected model is not installed." },
+    kali: kali.status === "ready" ? { state: "standby", detail: "Available on demand for an approved action." }
+      : kali.status === "failed" ? { state: "error", detail: "Kali reported a problem. See guided setup." }
+      : { state: "offline", detail: "Kali is not set up yet. See guided setup." },
+  };
+}
+
 export function formatDownloadSize(bytes) {
   const gib = 1024 ** 3;
   return bytes >= gib ? `${(bytes / gib).toFixed(2)} GiB` : `${(bytes / (1024 ** 2)).toFixed(2)} MiB`;

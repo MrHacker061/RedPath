@@ -18,7 +18,15 @@ from .downloads import DownloadCancelledError, DownloadError, download_verified
 from .manifest import OLLAMA_ARTIFACT
 from .state import SetupStage
 
+# How long the Ollama installer may run before setup reports a timeout.
 INSTALL_TIMEOUT_SECONDS = 600
+# How long a model download may run. It used to share the 10 minute installer
+# limit, which needed about 11 MB/s for the 6.5 GB model RedPath used then, so
+# slower internet always failed. With 60 minutes, the larger current model
+# (Qwen2.5-Coder, 3.8 GB) needs only about 1 MB/s. If it still times out,
+# clicking the download again resumes where it stopped. The dashboard waits slightly
+# longer than this (SETUP_OPERATION_TIMEOUT_MS in frontend/api.js).
+MODEL_PULL_TIMEOUT_SECONDS = 60 * 60
 MAX_PROGRESS_LINE_CHARS = 4096
 READER_DRAIN_SECONDS = 0.25
 Progress = Callable[[int, int | None], None]
@@ -218,7 +226,7 @@ class OllamaSetup:
             return self._cancelled()
         try:
             result = self.runner(
-                ["ollama", "pull", self.provider.model], self.destination, INSTALL_TIMEOUT_SECONDS, cancelled, progress
+                ["ollama", "pull", self.provider.model], self.destination, MODEL_PULL_TIMEOUT_SECONDS, cancelled, progress
             )
         except ProcessCancelled:
             return self._cancelled()

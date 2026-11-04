@@ -1,10 +1,9 @@
 """Linux container launcher; the host-side port mapping is the loopback boundary."""
 
-from pathlib import Path
-
 from redpath.config import get_settings
-
-CONTAINER_MARKERS = (Path("/.dockerenv"), Path("/run/.containerenv"))
+# The same marker files the Ollama address rule uses to allow Docker's host
+# address (see redpath_ai/providers.py), so both checks agree on "in a container".
+from redpath_ai.providers import CONTAINER_MARKERS
 
 
 def _require_container() -> None:

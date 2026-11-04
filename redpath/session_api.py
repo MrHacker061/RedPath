@@ -257,11 +257,16 @@ def recommendation_context(
     item: LabSession,
     target: AuthorizedTarget,
     findings: list[Finding],
+    lesson_title: str | None = None,
 ) -> RecommendationContext:
     return RecommendationContext(
         session_id=item.id,
         target_id=target.id,
-        lesson_objective="Choose a safe, evidence-supported next learning action.",
+        # The lesson the user typed tells the model what they are studying, so
+        # it can pick a fitting action instead of guessing. Without it, models
+        # picked unrelated actions (for example HTTP on a closed port). Falls
+        # back to the general goal when the session has no lesson title.
+        lesson_objective=lesson_title or "Choose a safe, evidence-supported next learning action.",
         findings=tuple(
             AIFinding(
                 id=value.id,
@@ -335,7 +340,8 @@ def recommend_session_action(
         .where(Finding.session_id == item.id, Finding.target_id == target.id)
         .order_by(Finding.created_at, Finding.id)
     ).all()
-    context = recommendation_context(item, target, list(stored))
+    lesson = db.scalar(select(LessonSource).where(LessonSource.session_id == item.id))
+    context = recommendation_context(item, target, list(stored), lesson.title if lesson else None)
     provider = request.app.state.llm_provider
     used_fallback = False
     try:

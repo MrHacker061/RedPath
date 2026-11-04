@@ -36,7 +36,18 @@ def recommendation_prompt(context: RecommendationContext) -> str:
         f"<untrusted_results>{json.dumps(payload['prior_results'], separators=(',', ':'))}"
         "</untrusted_results>\n\n"
         "Choose one supported action or ask for specific additional evidence. "
-        "Cite only supplied finding IDs. requires_approval must be true."
+        "Cite only supplied finding IDs. requires_approval must be true. "
+        # Spells out how to fill every field, since the answer format requires
+        # all of them (see recommendation_schema in providers.py). An action
+        # answer without the supporting finding IDs is always rejected.
+        "For an action, list the IDs of the findings that support it in finding_ids "
+        "and set evidence_needed to null. To ask for more evidence, set action_name "
+        "to null and arguments to {}. "
+        # The answer format limits ports to ports in the scan, but cannot tie a
+        # port to the finding the model cites, and models left out required
+        # arguments such as target_id. This sentence covers both.
+        "Include every required argument of the chosen action. port must be the "
+        "port of a finding you cite, and target_id must be the authorized target_id."
     )
 
 

@@ -90,7 +90,7 @@ def test_setup_discloses_pinned_downloads_before_consent(client, app):
         for name, stage in components.items()
     } == {
         "ollama": ("0.34.0", 1_574_272_976),
-        "model": ("qwen3.5:9b", 6_550_827_108),
+        "model": ("hf.co/IamLucif3r/Qwen3-4B-Instruct-2507-Abliterated:Q4_K_M", 2_497_292_749),
         "kali": ("2026.2", 247_857_686),
         "wsl": (None, None),
     }

@@ -14,6 +14,19 @@ const setup = {
   },
 };
 
+test("status cards follow the real Ollama, model and Kali setup checks", () => {
+  const health = (overrides) => setupModule.serviceHealthFromSetup(normalizeSetup({ components: Object.fromEntries(
+    Object.entries(setup.components).map(([name, stage]) => [name, { ...stage, ...overrides[name] }]),
+  ) }));
+  const ready = { status: "ready" };
+  assert.equal(health({ model: ready, kali: ready }).ollama.state, "healthy");
+  assert.equal(health({ kali: ready }).kali.state, "standby");
+  assert.equal(health({}).ollama.state, "error"); // Ollama up, model missing
+  assert.equal(health({}).kali.state, "error"); // Kali check failed
+  assert.equal(health({ ollama: { status: "needs_attention" }, model: { status: "needs_attention" } }).ollama.state, "offline");
+  assert.equal(health({ kali: { status: "needs_attention" } }).kali.state, "offline");
+});
+
 test("setup normalizes exact pinned download metadata and nulls", () => {
   const normalized = normalizeSetup(setup);
   assert.deepEqual(Object.fromEntries(Object.entries(normalized.components).map(([name, stage]) => [name, [stage.version, stage.downloadSizeBytes]])), {
