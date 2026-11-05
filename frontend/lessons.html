@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="RedPath guided beginner cybersecurity lessons">
+  <title>RedPath | Lessons</title>
+  <link rel="stylesheet" href="/assets/lessons.css">
+</head>
+
+<body class="lab-page">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <header class="lab-topbar">
+    <a class="lab-brand" href="/">
+      <svg class="lab-logo" viewBox="0 0 40 30" aria-hidden="true">
+        <path d="M1 29 13 4l7 13 5-8 14 20z" fill="#e5383b" />
+        <path d="M13 4l4 8-8 17H1z" fill="#ff6266" />
+      </svg>
+      <span>RedPath</span>
+    </a>
+
+    <div class="lab-heading">
+      <h1>Lessons</h1>
+      <p id="lab-subtitle">Simulated practice. Real skills. Safer tomorrow.</p>
+    </div>
+
+    <div class="lab-status" role="group" aria-label="Simulated lesson environment">
+      <div class="lab-status-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="4" y="5" width="16" height="11" rx="1" />
+          <path d="M2 19h20" />
+        </svg>
+        <div>
+          <p class="lab-status-name">Kali Linux <span class="status-pill">Simulated</span></p>
+          <p id="lab-machine-address" class="lab-status-address">No lesson selected</p>
+        </div>
+      </div>
+      <svg class="lab-status-link" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 9h14l-3-3M19 15H5l3 3" />
+      </svg>
+      <div class="lab-status-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="7" />
+          <circle cx="12" cy="12" r="2.5" />
+          <path d="M12 1v4M12 19v4M1 12h4M19 12h4" />
+        </svg>
+        <div>
+          <p class="lab-status-name">Practice Target <span class="status-pill">Simulated</span></p>
+          <p id="lab-target-address" class="lab-status-address">No lesson selected</p>
+        </div>
+      </div>
+    </div>
+
+    <button id="exit-lesson" class="lab-stop" type="button" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="5" y="5" width="14" height="14" rx="1.5" />
+      </svg>
+      Exit Lesson
+    </button>
+    <span id="lesson-timer" class="lab-timer" role="timer" aria-label="Time in this lesson">0:00:00</span>
+  </header>
+
+  <div class="lab-body">
+    <div class="lab-sidebar">
+      <nav aria-label="Primary navigation">
+        <ul class="lab-nav">
+          <li>
+            <a href="/#lab">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="m7 9 3 3-3 3M12 15h5" />
+              </svg>
+              Workspace
+            </a>
+          </li>
+          <li>
+            <a href="/#evidence">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 3h8l4 4v14H6z" />
+                <path d="M14 3v4h4M9 12h6M9 16h6" />
+              </svg>
+              Evidence
+            </a>
+          </li>
+          <li>
+            <a href="/lessons" aria-current="page">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 5c3-1 6-1 9 1v14c-3-2-6-2-9-1z" />
+                <path d="M21 5c-3-1-6-1-9 1v14c3-2 6-2 9-1z" />
+              </svg>
+              Lessons
+            </a>
+          </li>
+          <li>
+            <a href="/#report">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 20v-8M11 20V5M17 20v-6M2 20h20" />
+              </svg>
+              Report
+            </a>
+          </li>
+        </ul>
+      </nav>
+
+      <div class="lab-sidebar-footer">
+        <p class="lab-learner"><span class="lab-avatar" aria-hidden="true">S</span> Student</p>
+        <div class="lab-environment">
+          <p>Practice Mode <span class="status-pill">Simulated</span></p>
+          <a href="/#settings" aria-label="Settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path
+                d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" />
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <main id="main-content" class="lab-workspace">
+      <section id="lesson-library" class="lesson-library" aria-labelledby="lesson-library-title">
+        <h2 id="lesson-library-title" tabindex="-1">Choose a lesson</h2>
+        <p>
+          Each lesson walks through simulated terminal output one step at a time, then checks your
+          understanding. No real commands or scans run here.
+        </p>
+
+        <div class="lesson-cards">
+          <article class="lesson-card">
+            <p class="lesson-number">LESSON 01</p>
+            <h3>Introduction to Network Scanning</h3>
+            <pre class="lesson-preview" aria-hidden="true"><span class="prompt-user">kali@kali</span>:<span class="prompt-path">~</span>$ nmap -sV 192.168.56.20</pre>
+            <p>
+              Learn about network ports, common services, and how
+              to interpret basic scan results.
+            </p>
+            <p class="lesson-meta">Beginner | 3 steps | Simulated practice</p>
+            <button type="button" data-lesson-id="network-scanning">
+              Start Lesson
+            </button>
+          </article>
+
+          <article class="lesson-card">
+            <p class="lesson-number">LESSON 02</p>
+            <h3>Introduction to Linux Commands</h3>
+            <pre class="lesson-preview" aria-hidden="true"><span class="prompt-user">kali@kali</span>:<span class="prompt-path">~</span>$ pwd</pre>
+            <p>
+              Learn how to navigate a Linux terminal using
+              pwd, ls, and whoami.
+            </p>
+            <p class="lesson-meta">Beginner | 3 steps | Simulated practice</p>
+            <button type="button" data-lesson-id="linux-commands">
+              Start Lesson
+            </button>
+          </article>
+        </div>
+      </section>
+
+      <section id="active-lesson" class="active-lesson" aria-labelledby="active-lesson-title" hidden>
+        <h2 id="active-lesson-title" class="visually-hidden"></h2>
+
+        <div id="lesson-terminals" class="terminal-grid"></div>
+
+        <div class="step-bar">
+          <ol id="lesson-steps" class="step-tabs" aria-label="Lesson steps"></ol>
+          <p id="lesson-progress" class="step-progress" aria-live="polite"></p>
+        </div>
+
+        <section class="why-panel" aria-labelledby="why-panel-title">
+          <h3>
+            <button id="why-toggle" class="why-toggle" type="button" aria-expanded="true"
+              aria-controls="why-panel-body">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 5c3-1 6-1 9 1v14c-3-2-6-2-9-1z" />
+                <path d="M21 5c-3-1-6-1-9 1v14c3-2 6-2 9-1z" />
+              </svg>
+              <span id="why-panel-title">Why this matters</span>
+              <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m6 15 6-6 6 6" />
+              </svg>
+            </button>
+          </h3>
+
+          <div id="why-panel-body" class="why-panel-body">
+            <div class="why-main">
+              <svg class="why-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 18h6M10 21h4" />
+                <path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z" />
+              </svg>
+              <div id="lesson-content"></div>
+            </div>
+
+            <aside class="takeaways" aria-labelledby="takeaways-title">
+              <h4 id="takeaways-title">Key takeaways</h4>
+              <ul id="lesson-takeaways"></ul>
+            </aside>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <aside class="lab-assistant" aria-labelledby="guide-title">
+      <div class="assistant-header">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M10 3l1.8 5.2L17 10l-5.2 1.8L10 17l-1.8-5.2L3 10l5.2-1.8z" />
+          <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+        </svg>
+        <h2 id="guide-title">Lesson Guide</h2>
+      </div>
+
+      <div class="assistant-tabs" role="tablist" aria-label="Lesson guide views">
+        <button id="guide-tab-chat" class="assistant-tab" type="button" role="tab" aria-selected="true"
+          aria-controls="guide-chat">Chat</button>
+        <button id="guide-tab-findings" class="assistant-tab" type="button" role="tab" aria-selected="false"
+          aria-controls="guide-findings" tabindex="-1">Findings <span id="findings-count" class="tab-badge"
+            hidden></span></button>
+        <button id="guide-tab-hints" class="assistant-tab" type="button" role="tab" aria-selected="false"
+          aria-controls="guide-hints" tabindex="-1">Hints</button>
+      </div>
+
+      <div id="guide-chat" class="assistant-panel" role="tabpanel" aria-labelledby="guide-tab-chat">
+        <div id="guide-messages" class="guide-messages" aria-live="polite" tabindex="-1"></div>
+        <div id="guide-questions" class="guide-questions" role="group" aria-label="Suggested questions"></div>
+      </div>
+
+      <div id="guide-findings" class="assistant-panel" role="tabpanel" aria-labelledby="guide-tab-findings" hidden>
+        <ul id="findings-list" class="findings-list"></ul>
+      </div>
+
+      <div id="guide-hints" class="assistant-panel" role="tabpanel" aria-labelledby="guide-tab-hints" hidden>
+        <div id="hints-content"></div>
+      </div>
+
+      <p class="assistant-note">
+        Guide answers are written for each lesson. Everything shown here is simulated. Only practice on systems you
+        own or have explicit permission to test.
+      </p>
+    </aside>
+  </div>
+
+  <script type="module" src="/assets/lessons-page.js"></script>
+</body>
+
+</html>

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+const lessonsHtml = await readFile(new URL("../lessons.html", import.meta.url), "utf8");
 
 test("dashboard provides navigation and semantic page landmarks", () => {
   assert.match(html, /<header[ >]/);
@@ -80,4 +81,39 @@ test("setup, lab, approval, results, report, and settings are semantic regions",
   assert.match(html, /id="setup-repair"[^>]*type="button"/);
   assert.match(html, /id="setup-cancel"[^>]*type="button"/);
   assert.match(html, /id="diagnostics"[^>]*aria-live="polite"/);
+});
+
+test("lessons open on their own page instead of the dashboard", () => {
+  assert.match(html, /<a href="\/lessons">Lessons<\/a>/);
+  assert.doesNotMatch(html, /id="lessons"/);
+  assert.match(lessonsHtml, /<nav aria-label="Primary navigation">/);
+  assert.match(lessonsHtml, /<a href="\/lessons" aria-current="page">/);
+  assert.match(lessonsHtml, /<a class="lab-brand" href="\/">/);
+});
+
+test("lessons page provides landmarks and the lesson workspace", () => {
+  assert.match(lessonsHtml, /<a class="skip-link" href="#main-content">/);
+  assert.match(lessonsHtml, /<main id="main-content"/);
+  assert.match(lessonsHtml, /id="lesson-library"[^>]*aria-labelledby="lesson-library-title"/);
+  assert.match(lessonsHtml, /id="active-lesson"[^>]*aria-labelledby="active-lesson-title"[^>]*hidden/);
+  for (const id of ["lesson-terminals", "lesson-steps", "lesson-content", "lesson-takeaways", "exit-lesson", "lesson-timer"]) {
+    assert.match(lessonsHtml, new RegExp(`id="${id}"`));
+  }
+  assert.match(lessonsHtml, /data-lesson-id="network-scanning"/);
+  assert.match(lessonsHtml, /data-lesson-id="linux-commands"/);
+  assert.match(lessonsHtml, /<script type="module" src="\/assets\/lessons-page\.js">/);
+});
+
+test("lessons page labels its environment as simulated", () => {
+  assert.equal((lessonsHtml.match(/class="status-pill">Simulated</g) || []).length, 3);
+  assert.match(lessonsHtml, /aria-label="Simulated lesson environment"/);
+});
+
+test("why this matters panel is a disclosure and the guide uses labeled tabs", () => {
+  assert.match(lessonsHtml, /id="why-toggle"[^>]*type="button"[^>]*aria-expanded="true"[^>]*aria-controls="why-panel-body"/);
+  for (const panel of ["chat", "findings", "hints"]) {
+    assert.match(lessonsHtml, new RegExp(`id="guide-tab-${panel}"[^>]*role="tab"[^>]*aria-controls="guide-${panel}"`));
+    assert.match(lessonsHtml, new RegExp(`id="guide-${panel}"[^>]*role="tabpanel"[^>]*aria-labelledby="guide-tab-${panel}"`));
+  }
+  assert.match(lessonsHtml, /id="guide-messages"[^>]*aria-live="polite"/);
 });

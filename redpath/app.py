@@ -98,6 +98,10 @@ def create_app(
     def desktop_shell() -> FileResponse:
         return FileResponse(app_paths.frontend_dir / "index.html")
 
+    @app.get("/lessons", include_in_schema=False)
+    def lessons_page() -> FileResponse:
+        return FileResponse(app_paths.frontend_dir / "lessons.html")
+
     @app.get("/api/v1/desktop-session", include_in_schema=False)
     def desktop_session() -> JSONResponse:
         return JSONResponse({"csrf_token": local_security.csrf_token}, headers={

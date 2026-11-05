@@ -39,9 +39,10 @@ def test_health_endpoint_and_schema_creation(app, client_options):
     assert {"lab_sessions", "authorized_targets", "proposals", "policy_decisions"} <= set(inspect(app.state.engine).get_table_names())
 
 
-def test_fastapi_serves_desktop_shell(app, client_options):
+@pytest.mark.parametrize("page", ["/", "/lessons"])
+def test_fastapi_serves_desktop_shell(app, client_options, page):
     with TestClient(app, **client_options) as client:
-        response = client.get("/")
+        response = client.get(page)
 
         assert response.status_code == 200
         assert '<main id="main-content"' in response.text

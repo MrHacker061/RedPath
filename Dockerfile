@@ -1,7 +1,6 @@
 # syntax=docker/dockerfile:1
 FROM python:3.13-slim
 
-# AppPaths reads LOCALAPPDATA on every platform, so data lands in /data/RedPath.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -10,13 +9,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Dependencies come from pyproject.toml in their own layer so source edits skip reinstalling them.
+# Dependencies
 COPY pyproject.toml ./
 RUN python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']))" > /tmp/requirements.txt \
     && pip install -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
-# AppPaths resolves frontend/ next to the packages, so keep the source tree layout.
+# AppPaths
 COPY redpath ./redpath
 COPY redpath_ai ./redpath_ai
 COPY redpath_kali ./redpath_kali
