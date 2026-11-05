@@ -428,6 +428,70 @@ button:disabled {
   border-color: var(--line-strong);
 }
 
+.lesson-card-featured {
+  border-color: #9f5559;
+  background: linear-gradient(145deg, var(--panel) 72%, rgba(229, 56, 59, .08));
+}
+
+.lesson-card-featured:hover {
+  border-color: var(--red);
+}
+
+.step-tab:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.command-practice {
+  background: var(--terminal);
+  border: 1px solid var(--line-strong);
+  border-radius: .5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  margin: 1rem 0;
+  padding: 1rem;
+}
+
+.command-practice label {
+  color: var(--text-soft);
+  display: grid;
+  flex: 1 1 19rem;
+  font-size: .9rem;
+  gap: .45rem;
+}
+
+.command-practice input {
+  background: #0c1420;
+  border: 1px solid var(--line-strong);
+  border-radius: .35rem;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: .9rem;
+  min-width: 0;
+  padding: .75rem;
+  width: 100%;
+}
+
+.command-practice input:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+.command-practice button {
+  align-self: end;
+}
+
+.command-feedback {
+  flex-basis: 100%;
+  font-size: .85rem;
+  margin: 0;
+}
+
+.command-feedback[data-state="error"] {
+  color: #ff9396;
+}
+
 .lesson-card h3 {
   font-size: 1.15rem;
   margin: 0;
