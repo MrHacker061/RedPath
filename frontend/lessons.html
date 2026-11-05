@@ -47,7 +47,7 @@
           <path d="M12 1v4M12 19v4M1 12h4M19 12h4" />
         </svg>
         <div>
-          <p class="lab-status-name">Practice Target <span class="status-pill">Simulated</span></p>
+          <p class="lab-status-name">Practice Target <span id="target-mode" class="status-pill">Simulated</span></p>
           <p id="lab-target-address" class="lab-status-address">No lesson selected</p>
         </div>
       </div>
@@ -123,8 +123,7 @@
       <section id="lesson-library" class="lesson-library" aria-labelledby="lesson-library-title">
         <h2 id="lesson-library-title" tabindex="-1">Choose a lesson</h2>
         <p>
-          Each lesson walks through simulated terminal output one step at a time, then checks your
-          understanding. No real commands or scans run here.
+          Practice commands and read representative output one step at a time. Nothing you type on this page runs on a target.
         </p>
 
         <div class="lesson-cards">
@@ -154,6 +153,15 @@
             <button type="button" data-lesson-id="linux-commands">
               Start Lesson
             </button>
+          </article>
+
+          <article class="lesson-card lesson-card-featured">
+            <p class="lesson-number">LESSON 03 · LOCAL LAB</p>
+            <h3>Investigate an Exposed FTP Service</h3>
+            <pre class="lesson-preview" aria-hidden="true"><span class="prompt-user">kali@kali</span>:<span class="prompt-path">~</span>$ nmap -sV -Pn -p 21,22 192.168.56.20</pre>
+            <p>Type the commands to find and confirm an unnecessary service on RP-SVC-001, then verify the fix.</p>
+            <p class="lesson-meta">Beginner | 5 steps | Local VM + simulated output</p>
+            <button type="button" data-lesson-id="training-vm">Start Lesson</button>
           </article>
         </div>
       </section>
@@ -234,8 +242,7 @@
       </div>
 
       <p class="assistant-note">
-        Guide answers are written for each lesson. Everything shown here is simulated. Only practice on systems you
-        own or have explicit permission to test.
+        Guide answers are written for each lesson. Terminal output on this page is simulated. Only practice on systems you own or have explicit permission to test.
       </p>
     </aside>
   </div>

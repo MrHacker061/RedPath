@@ -1,4 +1,6 @@
 
+import { TRAINING_VM_LESSON, matchesTrainingCommand } from "./training-vm-lesson.js";
+
 /*
  * RedPath beginner lessons.
  * All terminal examples are simulated.
@@ -11,6 +13,7 @@
 const SIMULATED_KALI = { address: "10.0.2.15" };
 
 export const LESSONS = {
+  "training-vm": TRAINING_VM_LESSON,
   "network-scanning": {
     title: "Introduction to Network Scanning",
     machine: SIMULATED_KALI,
@@ -330,6 +333,7 @@ export function initializeLessons() {
     subtitle: "#lab-subtitle",
     machineAddress: "#lab-machine-address",
     targetAddress: "#lab-target-address",
+    targetMode: "#target-mode",
     exit: "#exit-lesson",
     timer: "#lesson-timer",
     terminals: "#lesson-terminals",
@@ -365,6 +369,7 @@ export function initializeLessons() {
   let reached = 0;
   let completed = false;
   let asked = new Set();
+  let solvedCommands = new Set();
   let timerId = null;
 
   function createElement(tag, text, className) {
@@ -443,7 +448,7 @@ export function initializeLessons() {
   }
 
   function addFindingCard(finding) {
-    const label = createElement("p", "Observed Finding", "finding-label");
+    const label = createElement("p", lessonId === "training-vm" ? "Practice Finding" : "Observed Finding", "finding-label");
     label.prepend(createElement("span", "", "finding-icon"));
 
     const content = [
@@ -479,7 +484,7 @@ export function initializeLessons() {
     }
 
     lesson.findings
-      .filter((finding) => finding.step === index)
+      .filter((finding) => finding.step === index && (!lesson.steps[index].command || solvedCommands.has(index)))
       .forEach(addFindingCard);
   }
 
@@ -520,7 +525,7 @@ export function initializeLessons() {
 
   function renderFindings() {
     const found = lesson
-      ? lesson.findings.filter((finding) => finding.step <= reached)
+      ? lesson.findings.filter((finding) => finding.step <= reached && (!lesson.steps[finding.step].command || solvedCommands.has(finding.step)))
       : [];
 
     ui.findingsCount.textContent = String(found.length);
@@ -570,7 +575,7 @@ export function initializeLessons() {
     const screens = [];
 
     ui.terminals.replaceChildren(...lesson.terminals.map((entries, index) => {
-      const visible = entries.filter((entry) => entry.step <= reached);
+      const visible = entries.filter((entry) => entry.step <= reached && (!lesson.steps[entry.step].command || solvedCommands.has(entry.step)));
       const terminal = document.createElement("article");
       terminal.className = "terminal-window";
 
@@ -639,6 +644,10 @@ export function initializeLessons() {
         button.dataset.done = "true";
       }
 
+      if (lessonId === "training-vm" && lesson.steps.slice(0, index).some((earlier, earlierIndex) => earlier.command && !solvedCommands.has(earlierIndex))) {
+        button.disabled = true;
+      }
+
       item.append(button);
       return item;
     }));
@@ -669,6 +678,51 @@ export function initializeLessons() {
       ...step.paragraphs.map((paragraph) => createElement("p", paragraph)),
       controls
     ];
+  }
+
+  function commandContent(step, index) {
+    const form = document.createElement("form");
+    form.className = "command-practice";
+    const label = createElement("label", step.commandLabel);
+    const input = document.createElement("input");
+    input.type = "text";
+    input.name = "practice-command";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.required = true;
+    input.maxLength = 160;
+    input.placeholder = "Type the command here";
+    if (solvedCommands.has(index)) {
+      input.value = step.command;
+      input.readOnly = true;
+    }
+    label.append(input);
+    const feedback = createElement("p", solvedCommands.has(index) ? "Command accepted. Representative output is shown above." : "This checks your entry in the browser. It does not run a command.", "command-feedback");
+    feedback.setAttribute("role", "status");
+    const submit = createElement("button", "Check Command");
+    submit.type = "submit";
+    submit.hidden = solvedCommands.has(index);
+    form.append(label, submit, feedback);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!matchesTrainingCommand(input.value, step.command)) {
+        feedback.textContent = "Check the command, ports, and approved target address. Use Hints if needed.";
+        feedback.dataset.state = "error";
+        return;
+      }
+      if (!solvedCommands.has(index)) {
+        solvedCommands.add(index);
+        lesson.findings.filter((finding) => finding.step === index).forEach(addFindingCard);
+      }
+      showStep(index);
+    });
+    const controls = document.createElement("div");
+    controls.className = "lesson-controls";
+    controls.append(createButton("Back", () => showStep(index - 1, true), "secondary-button"));
+    if (solvedCommands.has(index)) {
+      controls.append(createButton("Next Step", () => showStep(index + 1, true)));
+    }
+    return [stepHeading(`Step ${index + 1}: ${step.title}`), ...step.paragraphs.map((paragraph) => createElement("p", paragraph)), form, controls];
   }
 
   function quizContent(step, index) {
@@ -783,6 +837,9 @@ export function initializeLessons() {
     }
 
     const total = lesson.steps.length;
+    if (lessonId === "training-vm" && lesson.steps.slice(0, index).some((earlier, earlierIndex) => earlier.command && !solvedCommands.has(earlierIndex))) {
+      return;
+    }
     const finished = index === total;
 
     current = index;
@@ -803,7 +860,8 @@ export function initializeLessons() {
     ui.content.replaceChildren(...(
       finished ? completionContent()
         : step.question ? quizContent(step, index)
-          : explanationContent(step, index)
+          : step.command ? commandContent(step, index)
+            : explanationContent(step, index)
     ));
 
     renderSteps();
@@ -833,6 +891,7 @@ export function initializeLessons() {
     reached = 0;
     completed = false;
     asked = new Set();
+    solvedCommands = new Set();
 
     ui.library.hidden = true;
     ui.activeLesson.hidden = false;
@@ -841,6 +900,7 @@ export function initializeLessons() {
     ui.subtitle.textContent = lesson.title;
     ui.machineAddress.textContent = lesson.machine.address;
     ui.targetAddress.textContent = lesson.target?.address ?? "Not used in this lesson";
+    ui.targetMode.textContent = id === "training-vm" ? "Local VM" : "Simulated";
     ui.takeaways.replaceChildren(...lesson.takeaways.map((takeaway) => createElement("li", takeaway)));
 
     ui.messages.replaceChildren();
@@ -864,6 +924,7 @@ export function initializeLessons() {
     ui.subtitle.textContent = defaultSubtitle;
     ui.machineAddress.textContent = "No lesson selected";
     ui.targetAddress.textContent = "No lesson selected";
+    ui.targetMode.textContent = "Simulated";
     ui.content.replaceChildren();
 
     ui.messages.replaceChildren();
