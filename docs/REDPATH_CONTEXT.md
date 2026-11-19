@@ -162,6 +162,10 @@ This keeps the AI from presenting guesses as confirmed vulnerabilities.
 - Session replay showing why each decision was made.
 - Instructor Mode (hosted for a class)
     * instructors create lesson packs and assign them students log in. Instructors see class progress and common mistakes.
+- Blue Team Investigation Logs
+    * code + logs for users to debug/fix. Users must find a way to contain/solve patches in loopholes.
+- Repairing Components in Setup Dashboard
+- Co-op mode: work with a friend on a lesson.
  
   
 Advanced features are optional. The team should finish and polish the core learning workflow before adding them.
