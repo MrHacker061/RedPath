@@ -148,6 +148,7 @@ This keeps the AI from presenting guesses as confirmed vulnerabilities.
 - Emergency stop.
 - Cleanup checklist.
 - After-action learning report.
+- Option to toggle AI Models for Chats.
 
 ## Possible advanced features
 
@@ -159,7 +160,10 @@ This keeps the AI from presenting guesses as confirmed vulnerabilities.
 - A rules-only mode for weak hardware or uncertain model output.
 - Accessibility-focused explanations for beginners.
 - Session replay showing why each decision was made.
-
+- Instructor Mode (hosted for a class)
+    * instructors create lesson packs and assign them students log in. Instructors see class progress and common mistakes.
+ 
+  
 Advanced features are optional. The team should finish and polish the core learning workflow before adding them.
 
 ## Proposed technical direction
